@@ -600,7 +600,23 @@ thread_sleep (struct thread * thread) {
 	enum intr_level old_level;
 	old_level = intr_disable ();
 	list_push_back (&sleep_list, &thread->elem);
-	printf("Thread: %d sleep\n", thread->tid);
 	thread_block();
 	intr_set_level (old_level);
+}
+
+void
+thread_wake (int64_t ticks) {
+	struct thread * wake_thread;
+	struct list_elem * wake_elem;
+	if (!list_empty (&sleep_list)) {
+		wake_elem = list_front (&sleep_list);
+		while (wake_elem != &(sleep_list.tail)) {
+			if ((wake_thread = list_entry (wake_elem, struct thread, elem))->wakeup_tick <= ticks) {
+				list_remove(wake_elem);
+				thread_unblock(wake_thread);
+				return;
+			}
+			wake_elem = wake_elem -> next;
+		}
+	}
 }
