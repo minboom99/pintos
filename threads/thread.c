@@ -608,15 +608,17 @@ void
 thread_wake (int64_t ticks) {
 	struct thread * wake_thread;
 	struct list_elem * wake_elem;
+	struct list_elem * next;
 	if (!list_empty (&sleep_list)) {
 		wake_elem = list_front (&sleep_list);
+		next = wake_elem -> next;
 		while (wake_elem != &(sleep_list.tail)) {
 			if ((wake_thread = list_entry (wake_elem, struct thread, elem))->wakeup_tick <= ticks) {
 				list_remove(wake_elem);
 				thread_unblock(wake_thread);
-				return;
 			}
-			wake_elem = wake_elem -> next;
+			wake_elem = next;
+			next = wake_elem->next;
 		}
 	}
 }
