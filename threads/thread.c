@@ -40,6 +40,10 @@ static struct lock tid_lock;
 /* Thread destruction requests */
 static struct list destruction_req;
 
+/* List of processes in 'sleeping' state. Should wake up after
+sleep() time. */
+static struct list sleep_list; 
+
 /* Statistics. */
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
@@ -109,6 +113,7 @@ thread_init (void) {
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+	list_init (&sleep_list);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
@@ -587,4 +592,15 @@ allocate_tid (void) {
 	lock_release (&tid_lock);
 
 	return tid;
+}
+
+/* Puts a thread into the thread_sleep list. */
+void
+thread_sleep (struct thread * thread) {
+	enum intr_level old_level;
+	old_level = intr_disable ();
+	list_push_back (&sleep_list, &thread->elem);
+	printf("Thread: %d sleep\n", thread->tid);
+	thread_block();
+	intr_set_level (old_level);
 }

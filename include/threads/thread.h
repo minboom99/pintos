@@ -107,6 +107,7 @@ struct thread {
 	/* Owned by thread.c. */
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
+	int64_t wakeup_tick;
 };
 
 /* If false (default), use round-robin scheduler.
@@ -142,5 +143,7 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+void thread_sleep (struct thread *);
 
 #endif /* threads/thread.h */
