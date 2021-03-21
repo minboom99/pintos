@@ -24,6 +24,7 @@
    Do not modify this value. */
 #define THREAD_BASIC 0xd42df210
 
+
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -76,6 +77,12 @@ static tid_t allocate_tid (void);
  * always at the beginning of a page and the stack pointer is
  * somewhere in the middle, this locates the curent thread. */
 #define running_thread() ((struct thread *) (pg_round_down (rrsp ())))
+
+
+/* Returns larger integer between a and b */
+int max(a,b) {
+	 return a > b ? a : b;
+}
 
 
 // Global descriptor table for the thread_start.
@@ -322,7 +329,7 @@ thread_set_priority (int new_priority) {
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) {
-	return thread_current ()->priority;
+	return max(thread_current ()->priority, thread_current()->p_donation);
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -413,6 +420,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	t->p_donation = 0;
 	t->magic = THREAD_MAGIC;
 }
 
@@ -423,10 +431,27 @@ init_thread (struct thread *t, const char *name, int priority) {
    idle_thread. */
 static struct thread *
 next_thread_to_run (void) {
+	struct thread * t;
+	struct list_elem * e;
+	struct thread * t_with_highest_p;
+	struct list_elem * e_with_highest_p;
+	int highest_p = 0;
 	if (list_empty (&ready_list))
 		return idle_thread;
-	else
-		return list_entry (list_pop_front (&ready_list), struct thread, elem);
+	else {
+		e = list_front(&ready_list);
+		while (e != &(ready_list.tail)){
+			t = list_entry(e, struct thread, elem);
+			if (max(t->priority, t->p_donation) >= highest_p) {
+				highest_p = max(t->priority, t->p_donation);
+				e_with_highest_p = e;
+				t_with_highest_p = t;
+			}
+			e = e->next;
+		}
+		list_remove(e_with_highest_p);
+		return t_with_highest_p;
+	}
 }
 
 /* Use iretq to launch the thread */
@@ -604,6 +629,7 @@ thread_sleep (struct thread * thread) {
 	intr_set_level (old_level);
 }
 
+/* Wakes threads from sleeping */
 void
 thread_wake (int64_t ticks) {
 	struct thread * wake_thread;
@@ -621,4 +647,10 @@ thread_wake (int64_t ticks) {
 			next = wake_elem->next;
 		}
 	}
+}
+
+/* Donates priority of current running thread to thread holding lock. */
+void
+priority_donate (struct thread * lock_holder) {
+	lock_holder -> p_donation = max (thread_current()->priority, thread_current()->p_donation);
 }

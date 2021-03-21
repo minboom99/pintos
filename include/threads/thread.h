@@ -91,6 +91,7 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
+	int p_donation;						/* Priority received by donation. */
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
@@ -146,5 +147,7 @@ void do_iret (struct intr_frame *tf);
 
 void thread_sleep (struct thread *);
 void thead_wake (int64_t);
+
+void priority_donate (struct thread *);
 
 #endif /* threads/thread.h */
