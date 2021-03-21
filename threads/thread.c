@@ -255,6 +255,8 @@ thread_unblock (struct thread *t) {
 	list_push_back (&ready_list, &t->elem);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
+	if (t != idle_thread && t != initial_thread && !intr_context())
+		thread_yield();
 }
 
 /* Returns the name of the running thread. */
@@ -440,9 +442,12 @@ next_thread_to_run (void) {
 		return idle_thread;
 	else {
 		e = list_front(&ready_list);
+		t = list_entry(e, struct thread, elem);
+		e_with_highest_p = e;
+		t_with_highest_p = t;
 		while (e != &(ready_list.tail)){
 			t = list_entry(e, struct thread, elem);
-			if (max(t->priority, t->p_donation) >= highest_p) {
+			if (max(t->priority, t->p_donation) > highest_p) {
 				highest_p = max(t->priority, t->p_donation);
 				e_with_highest_p = e;
 				t_with_highest_p = t;
