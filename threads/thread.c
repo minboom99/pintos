@@ -659,7 +659,7 @@ thread_wake (int64_t ticks) {
 	}
 }
 
-/* Donates priority of current running thread to thread holding lock. */
+/* Donates priority to threads holding lock. */
 void
 give_donate (struct thread * t_donate_from) {
 	struct thread * t_donate_to;
@@ -672,6 +672,7 @@ give_donate (struct thread * t_donate_from) {
 	}
 }
 
+/* Re-calculate the priority of current thread considering multiple/nested donation after releasing a lock. */
 void
 refresh_donation (void) {
 	struct thread * curr = thread_current();
@@ -688,6 +689,7 @@ refresh_donation (void) {
 	curr -> p_donation = p_donation_update;
 }
 
+/* After releasing a lock, remove threads which tried to aquire the lock from lock_ls. */
 void
 remove_from_lock_ls (struct lock * lock) {
 	struct thread * curr = thread_current();
