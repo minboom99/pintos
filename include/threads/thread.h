@@ -93,6 +93,11 @@ struct thread {
 	int priority;                       /* Priority. */
 	int p_donation;						/* Priority received by donation. */
 
+	struct list lock_ls;				/* List of threads that trying to aquire it's lock */
+	struct list_elem lock_ls_e;			/* list_elem for lock_ls */
+
+	struct lock * lock_waiting;			/* The lock it tryies to aquire */
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
@@ -148,6 +153,8 @@ void do_iret (struct intr_frame *tf);
 void thread_sleep (struct thread *);
 void thead_wake (int64_t);
 
-void priority_donate (struct thread *);
+void give_donate (struct thread *);
+void refresh_donation (void);
+void remove_from_lock_ls(struct lock *);
 
 #endif /* threads/thread.h */

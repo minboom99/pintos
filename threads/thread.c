@@ -255,7 +255,7 @@ thread_unblock (struct thread *t) {
 	list_push_back (&ready_list, &t->elem);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
-	if (t != idle_thread && t != initial_thread && !intr_context())
+	if (!intr_context ())
 		thread_yield();
 }
 
@@ -325,7 +325,10 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
+	int old_priority = thread_current()->priority;
 	thread_current ()->priority = new_priority;
+	if (old_priority > new_priority)
+		thread_yield();
 }
 
 /* Returns the current thread's priority. */
@@ -424,6 +427,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->priority = priority;
 	t->p_donation = 0;
 	t->magic = THREAD_MAGIC;
+	list_init(&t->lock_ls);
+	t->lock_waiting = NULL;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -656,6 +661,48 @@ thread_wake (int64_t ticks) {
 
 /* Donates priority of current running thread to thread holding lock. */
 void
-priority_donate (struct thread * lock_holder) {
-	lock_holder -> p_donation = max (thread_current()->priority, thread_current()->p_donation);
+give_donate (struct thread * t_donate_from) {
+	struct thread * t_donate_to;
+	if (t_donate_from->lock_waiting != NULL) {
+		t_donate_to = t_donate_from->lock_waiting->holder;
+		if(max(t_donate_from->priority, t_donate_from->p_donation) > max(t_donate_to->priority, t_donate_to->p_donation)) {
+			t_donate_to->p_donation = max(t_donate_from->priority, t_donate_from->p_donation);
+		}
+		give_donate(t_donate_to);
+	}
+}
+
+void
+refresh_donation (void) {
+	struct thread * curr = thread_current();
+	struct thread * t;
+	int p_donation_update = 0;
+	if (!list_empty(&curr->lock_ls)) {
+		struct list_elem *e = list_front(&curr->lock_ls);
+		while (e != &curr->lock_ls.tail) {
+			t = list_entry(e, struct thread, lock_ls_e);
+			p_donation_update = max(p_donation_update, max(t->priority, t->p_donation));
+			e = e->next;
+		}
+	}
+	curr -> p_donation = p_donation_update;
+}
+
+void
+remove_from_lock_ls (struct lock * lock) {
+	struct thread * curr = thread_current();
+	struct thread * t;
+	struct list_elem * e;
+	if (!list_empty(&curr->lock_ls)) {
+		e = list_front(&curr->lock_ls);
+		while (e != &curr->lock_ls.tail) {
+			t = list_entry(e, struct thread, lock_ls_e);
+			if (t->lock_waiting == lock) {
+				e = list_remove(e);
+			}
+			else {
+				e = e->next;
+			}
+		}
+	}
 }
