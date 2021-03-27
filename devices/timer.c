@@ -129,6 +129,30 @@ timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
 
+	if (thread_mlfqs) {
+		/*
+			* 1. current_cpu increment
+			* 2. load_avg 계산
+			* 3. recent_cpu 계산 (tick에 따라 all을 부름)
+			* 4. priority 계산 (tick에 따라 all을 부름)
+		*/
+		// ========================= 1 =========================
+		mlfqs_increment();
+		// ========================= 2 =========================
+		if (ticks % TIMER_FREQ == 0) {
+			mlfqs_load_avg();
+		}
+		// ========================= 3 =========================
+		if (ticks % TIMER_FREQ == 0) {
+			mlfqs_recent_cpu_all();
+		}
+		// ========================= 4 =========================
+		if (ticks % 4 == 0)
+		{
+			mlfqs_priority_all();
+		}
+	}
+
 	thread_wake(ticks);
 }
 

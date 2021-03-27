@@ -101,6 +101,10 @@ struct thread {
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
+	int nice;
+	int recent_cpu; 					/* Shoulde be fp value */
+	struct list_elem all_th_ls_e;
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
@@ -151,10 +155,17 @@ int thread_get_load_avg (void);
 void do_iret (struct intr_frame *tf);
 
 void thread_sleep (struct thread *);
-void thead_wake (int64_t);
+void thread_wake (int64_t);
 
 void give_donate (struct thread *);
 void refresh_donation (void);
 void remove_from_lock_ls(struct lock *);
+
+void mlfqs_priority (struct thread *);
+void mlfqs_recent_cpu (struct thread *);
+void mlfqs_load_avg (void);
+void mlfqs_increment (void);
+void mlfqs_priority_all (void);
+void mlfqs_recent_cpu_all (void);
 
 #endif /* threads/thread.h */

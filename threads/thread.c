@@ -11,6 +11,7 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
+#include "threads/fixed_point.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -24,6 +25,9 @@
    Do not modify this value. */
 #define THREAD_BASIC 0xd42df210
 
+#define NICE_DEFAULT 0 					/* Default nice value*/
+#define RECENT_CPU_DEFAULT 0 			/* Default recent_cpu value*/
+#define LOAD_AVG_DEFAULT 0				/* Default load_avg value*/
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
@@ -45,6 +49,9 @@ static struct list destruction_req;
 sleep() time. */
 static struct list sleep_list; 
 
+/* List of all threads after creation and before destruction */
+static struct list all_thread_list;
+
 /* Statistics. */
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
@@ -58,6 +65,8 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+
+int load_avg;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -121,12 +130,14 @@ thread_init (void) {
 	list_init (&ready_list);
 	list_init (&destruction_req);
 	list_init (&sleep_list);
+	list_init (&all_thread_list);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
+	list_push_back(&all_thread_list, &initial_thread->all_th_ls_e);
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -137,6 +148,7 @@ thread_start (void) {
 	struct semaphore idle_started;
 	sema_init (&idle_started, 0);
 	thread_create ("idle", PRI_MIN, idle, &idle_started);
+	load_avg = LOAD_AVG_DEFAULT;
 
 	/* Start preemptive thread scheduling. */
 	intr_enable ();
@@ -215,6 +227,9 @@ thread_create (const char *name, int priority,
 	t->tf.ss = SEL_KDSEG;
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
+	
+
+	list_push_back (&all_thread_list, &t->all_th_ls_e);
 
 	/* Add to run queue. */
 	thread_unblock (t);
@@ -325,6 +340,8 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
+	if (thread_mlfqs)
+		return;
 	int old_priority = thread_current()->priority;
 	thread_current ()->priority = new_priority;
 	if (old_priority > new_priority)
@@ -337,31 +354,59 @@ thread_get_priority (void) {
 	return max(thread_current ()->priority, thread_current()->p_donation);
 }
 
+/* 
+	* Sets the current thread's nice value to new nice and recalculates the thread's priority 
+	* based on the new value (see Calculating Priority).
+	* If the running thread no longer has the highest priority, yields.
+*/
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice UNUSED) {
-	/* TODO: Your implementation goes here */
+	enum intr_level old_level;
+	int old_priority;
+	old_level = intr_disable();
+	thread_current() -> nice = nice;
+	// recalculates the thread's priority, and if the running thread no longer has the highest priority, yields
+	old_priority = thread_current()->priority;
+	mlfqs_priority(thread_current());
+	if (thread_current()->priority < old_priority)
+		thread_yield();
+	intr_set_level(old_level);
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) {
-	/* TODO: Your implementation goes here */
-	return 0;
+	int nice;
+	enum intr_level old_level;
+	old_level = intr_disable();
+	nice = thread_current()->nice;
+	intr_set_level(old_level);
+	return nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) {
-	/* TODO: Your implementation goes here */
-	return 0;
+	int returnVal;
+	enum intr_level old_level;
+	old_level = intr_disable();
+	returnVal = fp_to_int(mult_mixed(load_avg, 100));
+	intr_set_level(old_level);
+	return returnVal;
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) {
-	/* TODO: Your implementation goes here */
-	return 0;
+	int returnVal;
+	int recent_cpu;
+	enum intr_level old_level;
+	old_level = intr_disable();
+	recent_cpu = thread_current()->recent_cpu;
+	returnVal = fp_to_int(mult_mixed(recent_cpu, 100));
+	intr_set_level(old_level);
+	return returnVal;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -426,6 +471,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
 	t->p_donation = 0;
+	t->nice = NICE_DEFAULT;
+	t->recent_cpu = RECENT_CPU_DEFAULT;
 	t->magic = THREAD_MAGIC;
 	list_init(&t->lock_ls);
 	t->lock_waiting = NULL;
@@ -608,6 +655,7 @@ schedule (void) {
 		if (curr && curr->status == THREAD_DYING && curr != initial_thread) {
 			ASSERT (curr != next);
 			list_push_back (&destruction_req, &curr->elem);
+			list_remove(&curr->all_th_ls_e);
 		}
 
 		/* Before switching the thread, we first save the information
@@ -706,5 +754,85 @@ remove_from_lock_ls (struct lock * lock) {
 				e = e->next;
 			}
 		}
+	}
+}
+
+/* Calculates priority of given thread with mlfqs scheduler */
+void mlfqs_priority (struct thread *t) {
+	int nice = t->nice;
+	int recent_cpu = t->recent_cpu;
+	int priority;
+	if (t == idle_thread)
+		return;
+	// priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
+	priority = fp_to_int_round(sub_mixed(sub_fp(int_to_fp(PRI_MAX), div_mixed(recent_cpu, 4)), nice*2));
+	if (priority > PRI_MAX)
+		priority = PRI_MAX;
+	if (priority < PRI_MIN)
+		priority = PRI_MIN;
+	t->priority = priority;
+}
+
+/* Calculates recent_cpu of given thread with mlfqs scheduler */
+void mlfqs_recent_cpu (struct thread *t) {
+	int new_recent_cpu; // should be fp value
+	int add_left; // should be fp value
+	int mult_left, mult_right, twice_load_avg; // should be fp value
+	if (t == idle_thread)
+		return;
+	// Calculate  and assign recent_cpu = (2 * load_avg)/(2 * load_avg + 1) * recent_cpu + nice;
+	twice_load_avg = mult_mixed(load_avg, 2);
+	mult_left = div_fp(twice_load_avg, add_mixed(twice_load_avg, 1)); // (2 * load_avg)/(2 * load_avg + 1)
+	mult_right = t->recent_cpu; // recent_cpu
+	add_left = mult_fp(mult_left, mult_right); // (2 * load_avg)/(2 * load_avg + 1) * recent_cpu
+	new_recent_cpu = add_mixed(add_left, t->nice); // nice is int
+	t->recent_cpu = new_recent_cpu;
+}
+
+/* Calculates load_avg with mlfqs scheduler */
+void mlfqs_load_avg (void) {
+	int ready_threads;
+	int new_load_avg;
+	ready_threads = list_size(&ready_list);
+	if (thread_current() != idle_thread)
+		ready_threads ++;
+	// load_avg = (59/60) * load_avg + (1/60) * ready_threads
+	new_load_avg = add_fp(mult_fp(div_mixed(int_to_fp(59), 60),load_avg), mult_mixed(div_mixed(int_to_fp(1), 60),ready_threads));
+	load_avg = new_load_avg;
+}
+
+/* Increases recent_cpu by 1 */
+void mlfqs_increment (void) {
+	int recent_cpu;
+	struct thread * curr = thread_current();
+	if (thread_current() == idle_thread)
+		return;
+	recent_cpu = thread_current()->recent_cpu;
+	thread_current()->recent_cpu = add_mixed(recent_cpu, 1);
+}
+
+/* Calculates priority of all threads in all_thread_list with mlfqs scheduler */
+void mlfqs_priority_all (void) {
+	struct list_elem *temp_thread_el;
+	struct thread *temp_thread;
+	for (temp_thread_el = list_begin(&all_thread_list);
+	 temp_thread_el != list_tail(&all_thread_list);
+	  temp_thread_el = list_next(temp_thread_el))
+	{
+		temp_thread = list_entry(temp_thread_el, struct thread, all_th_ls_e);
+		mlfqs_priority(temp_thread);
+	}
+}
+
+/* Calculates recent_cpu of all threads in all_thread_list with mlfqs scheduler */
+void mlfqs_recent_cpu_all (void) {
+	struct list_elem *temp_thread_el;
+	struct thread *temp_thread;
+	for (temp_thread_el = list_begin(&all_thread_list);
+	 temp_thread_el != list_tail(&all_thread_list);
+	  temp_thread_el = list_next(temp_thread_el))
+	{
+		temp_thread = list_entry(temp_thread_el, struct thread, all_th_ls_e);
+		mlfqs_recent_cpu(temp_thread);
 	}
 }
