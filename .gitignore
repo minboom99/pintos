@@ -2,3 +2,4 @@
 .vscode/*
 *.output
 *.errors
+*.tar.gz
