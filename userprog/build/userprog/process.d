@@ -15,4 +15,4 @@ userprog/process.o: ../../userprog/process.c \
  ../../include/threads/init.h ../../include/threads/palloc.h \
  ../../include/threads/mmu.h ../../include/threads/pte.h \
  ../../include/threads/vaddr.h ../../include/intrinsic.h \
- ../../include/threads/mmu.h ../../include/threads/malloc.h
+ ../../include/threads/mmu.h
