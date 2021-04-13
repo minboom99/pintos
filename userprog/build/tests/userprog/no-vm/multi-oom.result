@@ -1,0 +1,2 @@
+FAIL
+run: On 3th loop(multi-oom) should have forked at least 236 times, but 235 times forked: FAILED

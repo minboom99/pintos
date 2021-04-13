@@ -20,7 +20,6 @@
 #include "threads/vaddr.h"
 #include "intrinsic.h"
 #include "list.h"
-#include "threads/malloc.h"
 
 #ifdef VM
 #include "vm/vm.h"
@@ -114,6 +113,8 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
 	newpage = palloc_get_page(PAL_USER);
+	if (!newpage)
+		return false;
 
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
@@ -126,6 +127,7 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 	if (!pml4_set_page(current->pml4, va, newpage, writable))
 	{
 		/* 6. TODO: if fail to insert page, do error handling. */
+		palloc_free_page(newpage);
 		current->exit_status = -1;
 		return false;
 	}
@@ -147,6 +149,11 @@ __do_fork(void *aux)
 	struct intr_frame *parent_if = parent->if_;
 	bool succ = true;
 
+	/* set parent and child relation */
+	current->parent = parent;
+	list_remove(&current->child_e);
+	list_push_back(&parent->child_ls, &current->child_e);
+
 	/* 1. Read the cpu context to local stack. */
 	memcpy(&if_, parent_if, sizeof(struct intr_frame));
 
@@ -154,11 +161,7 @@ __do_fork(void *aux)
 	current->pml4 = pml4_create();
 	if (current->pml4 == NULL)
 		goto error;
-
-	/* set parent and child relation */
-	current->parent = parent;
-	list_remove(&current->child_e);
-	list_push_back(&parent->child_ls, &current->child_e);
+	
 
 	process_activate(current);
 #ifdef VM
@@ -178,16 +181,15 @@ __do_fork(void *aux)
 
 	// parent의 fd_table의 element들을 current의 fd_table로 복사하기
 	memset(current->fd_table, 0, sizeof(current->fd_table));
-	current->fd_table_len = parent->fd_table_len;
 	// 0이랑 1은 비워둬야함, fd_table_len은 2에서 시작
 	for (int fd = 2; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
 	{
 		if (!parent->fd_table[fd])
 			continue;
 		struct file *fp = file_duplicate(parent->fd_table[fd]);
-		current->fd_table[fd] = fp;
 		if (fp == NULL)
 			goto error;
+		current->fd_table[fd] = fp;
 	}
 
 	process_init();
@@ -196,7 +198,8 @@ __do_fork(void *aux)
 	if (succ)
 		do_iret(&if_);
 error:
-	thread_exit();
+	exit(-1);
+	// thread_exit();
 }
 
 /* Switch the current execution context to the f_name.
@@ -224,8 +227,9 @@ int process_exec(void *f_name)
 
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
-	if (!success)
+	if (!success) {
 		return -1;
+	}
 
 	/* Start switched process. */
 	do_iret(&_if);
@@ -260,11 +264,26 @@ int process_wait(tid_t child_tid UNUSED)
 			list_remove(&child->elem);
 		}
 		list_remove(&child->child_e);
+		//printf("%d\n", child->tid);
+
+		for (int fd = 0; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
+		{
+			if (child->fd_table[fd])
+				printf("fd leak at name : %s, pid: %d, fd: %d\n", child->name, child->tid, fd);
+		}
+
+		if (!list_empty(&child->child_ls))
+			printf("child_ls remained: %d\n", child->tid);
+
+		if (!list_empty(&child->lock_waiting_thread_ls))
+			printf("lock waiting ls remained: %d\n", child->tid);
+
 		palloc_free_page(child);
 		return exit_status;
 	}
 
 	parent->waiting_child = child;
+	// sema_down(&parent->load_sema); // ?
 	sema_down(&parent->wait_sema);
 	
 	ASSERT(child->is_terminated);
@@ -273,8 +292,22 @@ int process_wait(tid_t child_tid UNUSED)
 		list_remove(&child->elem);
 	}
 	list_remove(&child->child_e);
-	palloc_free_page(child);
+	// printf("%d\n", child->tid);
+	
+	for (int fd = 0; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
+	{
+		if (child->fd_table[fd])
+			printf("fd leak at name : %s, pid: %d, fd: %d\n", child->name, child->tid, fd);
+	}
 
+	if (!list_empty(&child->child_ls))
+			printf("child_ls remained: %d\n", child->tid);
+
+	if (!list_empty(&child->lock_waiting_thread_ls))
+		printf("lock waiting ls remained: %d\n", child->tid);
+
+	palloc_free_page(child);
+	
 	return exit_status;
 }
 
@@ -289,18 +322,36 @@ void process_exit(void)
 
 	/* 실행 중인 파일 close */
 	// ! file_close(curr->running_file);
+	struct list_elem * e;
+	struct thread *child;
+	tid_t pid;
+	/*
+	 * 1. t에 child가 존재하는지 판단.
+	 * 2. 존재한다면, 각각의 child에 대하여(loop) child가 terminated 상태라면 free를 해준다. 
+	 * 아니라면, child의 parent를 NULL로 할당해준다.
+	 */
+
+	if (!list_empty(&curr->child_ls)) {
+		e = list_front(&curr->child_ls);
+		while (e != &curr->child_ls.tail)
+		{
+			child = list_entry (e, struct thread, child_e);
+			pid = child->tid;
+			e = e->next;
+			process_wait(pid);
+		}
+	}
 
 	/*
 	 * 프로세스에 열린 모든 파일을 닫음
-	 * fd_table_len이 2가 될 때까지 파일을 닫음
-	 * fd_table 메모리 해제(?)
+	 * fd_table 메모리 해제(malloc 이면)
 	 */
-	// fd_table_len = 3 이었다면, 2가 최댓값이다 (1 줄여야 한다)
-	while (curr->fd_table_len > 2)
+	lock_acquire(&filesys_lock);
+	for (int fd = 2; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
 	{
-		curr->fd_table_len--;
-		process_close_file(curr->fd_table_len);
+		process_close_file(fd);
 	}
+	lock_release(&filesys_lock);
 
 	curr->is_terminated = true;
 
@@ -431,8 +482,6 @@ load(const char *file_name, struct intr_frame *if_)
 	char *argv[MAX_ARG_NUM];
 	// char **argv;
 
-	// ! struct lock filesys_lock;
-	// ! lock_init(&filesys_lock);
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create();
 	if (t->pml4 == NULL)
@@ -453,7 +502,7 @@ load(const char *file_name, struct intr_frame *if_)
 		goto done;
 	}
 	/* thread 구조체의 running_file을 현재 실행할 파일로 초기화 */
-	t->running_file = file;
+	// t->running_file = file;
 	/* 이 파일에 대한 write 거부 */
 	file_deny_write(file);
 	lock_release(&filesys_lock);
@@ -534,8 +583,6 @@ load(const char *file_name, struct intr_frame *if_)
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 	// ============================================================================	
-	
-
 	while (argument)
 	{
 		argv[argc++] = push_argument_stack(argument, if_);
@@ -564,9 +611,6 @@ load(const char *file_name, struct intr_frame *if_)
 	/* return address 집어넣기*/
 	if_->rsp -= 8;
 	*(uint64_t *)if_->rsp = NULL;
-
-	// free(argv)
-
 	// ============================================================================
 	success = true;
 
@@ -816,32 +860,15 @@ push_argument_stack(char *parse, struct intr_frame *if_)
 int process_add_file(struct file *fp)
 {
 	/* 파일 객체 포인터 fp 를 fd 테이블에 추가 */
-	/* fd_table_len 의 값 1증가 */
 	struct thread *thr_curr = thread_current();
-	int fd_len = thr_curr->fd_table_len;
-	int fd = fd_len;
-	int delta;
-
-	// thr_curr->fd_table[thr_curr->fd_table_len++] = fp;
+	int fd;
 
 	// 빈 자리 찾기
-	for (delta = 0;
-		delta < FILE_DESCRIPTORS_TABLE_SIZE;
-		fd = (fd_len + (delta++)) % FILE_DESCRIPTORS_TABLE_SIZE)
+	for (fd = 2; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
 	{
-		if (fd < 2)
-			fd = 2;
-
 		if (thr_curr->fd_table[fd] == NULL)
 		{
-			// if (strcmp(thread_current()->name, filename) == 0)
-			// {
-			// 	file_deny_write(fp);
-			// }
 			thr_curr->fd_table[fd] = fp;
-			
-			if (fd > fd_len)
-			thr_curr->fd_table_len = fd;
 			return fd;
 		}
 	}
@@ -855,8 +882,10 @@ struct file *process_get_file(int fd)
 	/* fd에 해당하는 파일 객체를 리턴 */
 	/* 없으면 NULL 리턴 */
 	struct thread *thr_curr = thread_current();
-	if (fd <= 1)
+
+	if (fd <= 1 || fd >= FILE_DESCRIPTORS_TABLE_SIZE)
 		return NULL;
+
 	return thr_curr->fd_table[fd];
 }
 
@@ -865,7 +894,10 @@ void process_close_file(int fd)
 	/* fd에 해당하는 파일을 닫음 */
 	/* file_descriptors_table에서 해당 엔트리 초기화 */
 	struct thread *thr_curr = thread_current();
-	
+
+	if (fd <= 1 || fd >= FILE_DESCRIPTORS_TABLE_SIZE)
+		return;
+
 	file_close(thr_curr->fd_table[fd]);
 	thr_curr->fd_table[fd] = NULL;
 }

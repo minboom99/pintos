@@ -72,7 +72,6 @@ void check_address(const void *addr)
 		* If you encounter an invalid user pointer afterward, 
 		* you must still be sure to release the lock or free the page of memory(thread_exit에서 해줌). 
 	*/
-
 	uint64_t *pml4 = thread_current()->pml4;
 	if (addr)
 		if (is_user_vaddr(addr))
@@ -203,25 +202,11 @@ void syscall_exit_handler(struct intr_frame *if_)
 void exit(int status)
 {
 	struct thread *t = thread_current();
+	// struct list_elem * e;
+	// struct thread *child;
+	// tid_t pid;
 	t->exit_status = status;
-	/*
-	 * 1. t에 child가 존재하는지 판단.
-	 * 2. 존재한다면, 각각의 child에 대하여(loop) child가 terminated 상태라면 free를 해준다. 
-	 * 아니라면, child의 parent를 NULL로 할당해준다.
-	 */
-	while (!list_empty(&t->child_ls))
-	{
-		struct thread *child =
-			list_entry(list_pop_front(&t->child_ls), struct thread, child_e);
-		if (child->is_terminated)
-		{
-			palloc_free_page(child);
-		}
-		else
-		{
-			child->parent = NULL;
-		}
-	}
+	
 	printf("%s: exit(%d)\n", t->name, t->exit_status);
 	
 	// if (lock_held_by_current_thread(&syscall_lock))
@@ -259,9 +244,20 @@ void syscall_fork_handler(struct intr_frame *if_)
 	check_address((void *)thr_name);
 	// Create new process which is the clone of current process with the name THREAD_NAME.
 	struct thread *thr_current = thread_current();
+	struct thread *child_thread;
 	if_->R.rax = 0;
 	thr_current->if_ = if_;
 	tid = process_fork(thr_name, if_);
+
+	// fork가 성공적으로 수행되었는지 체크해야 한다
+	child_thread = find_child_with_pid(thr_current, tid);
+
+	if (child_thread && child_thread->exit_status == -1) {
+		tid = TID_ERROR;
+		list_remove(&child_thread->child_e);
+		child_thread->parent = NULL;
+	}
+
 	thr_current->if_ = NULL;
 	if_->R.rax = tid;
 }
@@ -269,16 +265,28 @@ void syscall_fork_handler(struct intr_frame *if_)
 void syscall_exec_handler(struct intr_frame *if_)
 {
 	// int exec (const char *cmd_line);
+
+	/*
+		* Change current process to the executable whose name is given in cmd_line, passing any given arguments. 
+		* This never returns if successful. Otherwise the process terminates with exit state -1, 
+		* if the program cannot load or run for any reason. This function does not change the name of the thread that called exec. 
+		* Please note that file descriptors remain open across an exec call.
+	*/
+
 	char *cmd_line = if_->R.rdi;
+	check_address((void *)cmd_line);
+
 	char *name = palloc_get_page(0);
 	if (!name)
 	{
 		if_->R.rax = -1;
-		return;
+		exit(-1);
 	}
 	strlcpy(name, cmd_line, PGSIZE);
 	int ret = process_exec(name);
-	if_->R.rax = ret; // Not reached on success.
+	ASSERT(ret == -1);
+	if_->R.rax = ret;
+	exit(-1); // Not reached on success.
 }
 
 void syscall_wait_handler(struct intr_frame *if_)
@@ -371,10 +379,12 @@ void syscall_open_handler(struct intr_frame *if_)
 	struct file *fp = filesys_open(filename); // 파일을 open
 	if (fp == NULL)
 	{
-		if_->R.rax = -1; // 해당 파일이 존재하지 않으면 -1 리턴
+		if_->R.rax = -1; // 해당 파일이 존재하지 않거나 여는데 실패했으면 -1 리턴
 	}
 	else
-	{
+	{	
+		if (strcmp(thread_name(), filename) == 0)
+			file_deny_write(fp);
 		if_->R.rax = process_add_file(fp); // 해당 파일 객체에 fd부여, fd리턴
 	}
 	lock_release(&filesys_lock);
@@ -446,9 +456,10 @@ void syscall_read_handler(struct intr_frame *if_)
 			ret = -1;
 		}
 	}
-	if_->R.rax = ret;
 
+	if_->R.rax = ret;
 	lock_release(&filesys_lock);
+	
 }
 
 void syscall_write_handler(struct intr_frame *if_)
@@ -469,6 +480,7 @@ void syscall_write_handler(struct intr_frame *if_)
 	 * confusing both human readers and our grading scripts.
 	 */
 	// ============================= check validity of arguments =============================
+	struct thread * t = thread_current();
 	int fd = (int)if_->R.rdi;
 	if (fd < 0)
 	{
@@ -496,9 +508,10 @@ void syscall_write_handler(struct intr_frame *if_)
 			ret = (int)file_write(fp, buffer, (off_t)size);
 		}
 	}
-	if_->R.rax = ret;
 
+	if_->R.rax = ret;
 	lock_release(&filesys_lock);
+	
 }
 
 void syscall_seek_handler(struct intr_frame *if_)

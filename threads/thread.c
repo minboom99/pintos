@@ -14,6 +14,7 @@
 #include "threads/fixed_point.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -485,10 +486,13 @@ init_thread (struct thread *t, const char *name, int priority) {
 		list_push_back(&initial_thread->child_ls, &t->child_e);
 	}
 	t->if_ = NULL;
+
 	sema_init(&t->wait_sema, 0);
-	t->fd_table_len = 2; // 0, 1은 표준 입/출력
+	// sema_init(&t->load_sema, 0);
+
+	// t->fd_table_len = 2; // 0, 1은 표준 입/출력
 	t->waiting_child = NULL;
-	t->running_file = NULL;
+	// t->running_file = NULL;
 	t->is_terminated = false;
 }
 
@@ -633,8 +637,22 @@ do_schedule(int status) {
 	while (!list_empty (&destruction_req)) {
 		struct thread *victim =
 			list_entry (list_pop_front (&destruction_req), struct thread, elem);
-		if (!victim->parent)
+		if (!victim->parent) {
+			//printf("%d\n", victim->tid);
+			for (int fd = 0; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
+			{
+				if (victim->fd_table[fd])
+					printf("fd leak at name : %s, pid: %d, fd: %d\n", victim->name, victim->tid, fd);
+			}
+
+			if (!list_empty(&victim->child_ls))
+				printf("child_ls remained: %d\n", victim->tid);
+
+			if (!list_empty(&victim->lock_waiting_thread_ls))
+				printf("lock waiting ls remained: %d\n", victim->tid);
+
 			palloc_free_page(victim);
+		}
 	}
 	thread_current ()->status = status;
 	schedule ();
@@ -728,6 +746,8 @@ give_donate (struct thread * t_donate_from) {
 	struct thread * t_donate_to;
 	if (t_donate_from->lock_waiting != NULL) {
 		t_donate_to = t_donate_from->lock_waiting->holder;
+		if (t_donate_to == NULL)
+			return;
 		if(max(t_donate_from->priority, t_donate_from->p_donation) > max(t_donate_to->priority, t_donate_to->p_donation)) {
 			t_donate_to->p_donation = max(t_donate_from->priority, t_donate_from->p_donation);
 		}

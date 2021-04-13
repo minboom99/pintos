@@ -116,14 +116,15 @@ struct thread {
 	struct thread * waiting_child;		/* current waiting child (set by wait() syscall) */
 
 	struct semaphore wait_sema;			/* semaphore for wait() system call */
+	// struct semaphore load_sema; 		/* semaphore for calling load() */
 	int exit_status;					/* exit status */	
 	bool is_terminated;
 	/* =========================================================================== */
 
 	/* ========================== About File system ========================== */
 	struct file *fd_table[FILE_DESCRIPTORS_TABLE_SIZE]; /* 파일 객체 포인터의 배열 */
-	int fd_table_len; /* 현재 테이블에 존재하는 fd값의 최댓값 + 1 */
-	struct file *running_file; /* 현재 실행중인 파일 */
+	// int fd_table_len; /* 현재 테이블에 존재하는 fd값의 최댓값 + 1 */
+	// struct file *running_file; /* 현재 실행중인 파일 */
 	/*======================================================================== */
 
 #ifdef USERPROG

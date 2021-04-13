@@ -219,6 +219,7 @@ lock_acquire (struct lock *lock) {
 	sema_down (&lock->semaphore);
 
 	lock->holder = thread_current ();
+	thread_current()->lock_waiting = NULL;
 	if (!list_empty(&lock->semaphore.waiters)) {
 		e = list_front(&lock->semaphore.waiters);
 		while(e != &lock->semaphore.waiters.tail) {
