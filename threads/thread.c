@@ -228,7 +228,6 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 	
-
 	list_push_back (&all_thread_list, &t->all_th_ls_e);
 
 	/* Add to run queue. */
@@ -329,6 +328,9 @@ thread_yield (void) {
 	enum intr_level old_level;
 
 	ASSERT (!intr_context ());
+
+	if (curr->is_terminated)
+		return;
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
@@ -474,8 +476,20 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->nice = NICE_DEFAULT;
 	t->recent_cpu = RECENT_CPU_DEFAULT;
 	t->magic = THREAD_MAGIC;
-	list_init(&t->lock_ls);
+	list_init(&t->lock_waiting_thread_ls);
+	list_init(&t->child_ls);
 	t->lock_waiting = NULL;
+	t->parent = NULL;
+	if (t != initial_thread) {
+		t->parent = initial_thread;
+		list_push_back(&initial_thread->child_ls, &t->child_e);
+	}
+	t->if_ = NULL;
+	sema_init(&t->wait_sema, 0);
+	t->fd_table_len = 2; // 0, 1은 표준 입/출력
+	t->waiting_child = NULL;
+	t->running_file = NULL;
+	t->is_terminated = false;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -619,7 +633,8 @@ do_schedule(int status) {
 	while (!list_empty (&destruction_req)) {
 		struct thread *victim =
 			list_entry (list_pop_front (&destruction_req), struct thread, elem);
-		palloc_free_page(victim);
+		if (!victim->parent)
+			palloc_free_page(victim);
 	}
 	thread_current ()->status = status;
 	schedule ();
@@ -726,10 +741,10 @@ refresh_donation (void) {
 	struct thread * curr = thread_current();
 	struct thread * t;
 	int p_donation_update = 0;
-	if (!list_empty(&curr->lock_ls)) {
-		struct list_elem *e = list_front(&curr->lock_ls);
-		while (e != &curr->lock_ls.tail) {
-			t = list_entry(e, struct thread, lock_ls_e);
+	if (!list_empty(&curr->lock_waiting_thread_ls)) {
+		struct list_elem *e = list_front(&curr->lock_waiting_thread_ls);
+		while (e != &curr->lock_waiting_thread_ls.tail) {
+			t = list_entry(e, struct thread, lock_waiting_thread_ls_e);
 			p_donation_update = max(p_donation_update, max(t->priority, t->p_donation));
 			e = e->next;
 		}
@@ -737,16 +752,16 @@ refresh_donation (void) {
 	curr -> p_donation = p_donation_update;
 }
 
-/* After releasing a lock, remove threads which tried to aquire the lock from lock_ls. */
+/* After releasing a lock, remove threads which tried to aquire the lock from lock_waiting_thread_ls. */
 void
 remove_from_lock_ls (struct lock * lock) {
 	struct thread * curr = thread_current();
 	struct thread * t;
 	struct list_elem * e;
-	if (!list_empty(&curr->lock_ls)) {
-		e = list_front(&curr->lock_ls);
-		while (e != &curr->lock_ls.tail) {
-			t = list_entry(e, struct thread, lock_ls_e);
+	if (!list_empty(&curr->lock_waiting_thread_ls)) {
+		e = list_front(&curr->lock_waiting_thread_ls);
+		while (e != &curr->lock_waiting_thread_ls.tail) {
+			t = list_entry(e, struct thread, lock_waiting_thread_ls_e);
 			if (t->lock_waiting == lock) {
 				e = list_remove(e);
 			}

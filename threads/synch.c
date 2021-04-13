@@ -211,16 +211,18 @@ lock_acquire (struct lock *lock) {
 
 	if (lock->holder != NULL) {
 		thread_current()->lock_waiting = lock;
-		list_push_back(&lock->holder->lock_ls, &thread_current()->lock_ls_e);
+		list_push_back(&lock->holder->lock_waiting_thread_ls, &thread_current()->lock_waiting_thread_ls_e);
 		if (!thread_mlfqs)
 			give_donate(thread_current());
 	}
+	
 	sema_down (&lock->semaphore);
+
 	lock->holder = thread_current ();
 	if (!list_empty(&lock->semaphore.waiters)) {
 		e = list_front(&lock->semaphore.waiters);
 		while(e != &lock->semaphore.waiters.tail) {
-			list_push_back(&thread_current()->lock_ls, &list_entry(e, struct thread, elem)->lock_ls_e);
+			list_push_back(&thread_current()->lock_waiting_thread_ls, &list_entry(e, struct thread, elem)->lock_waiting_thread_ls_e);
 			e = e->next;
 		}
 	}

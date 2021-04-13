@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -27,6 +28,8 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+#define FILE_DESCRIPTORS_TABLE_SIZE 128
 
 /* A kernel thread or user process.
  *
@@ -93,8 +96,8 @@ struct thread {
 	int priority;                       /* Priority. */
 	int p_donation;						/* Priority received by donation. */
 
-	struct list lock_ls;				/* List of threads that trying to aquire it's lock */
-	struct list_elem lock_ls_e;			/* list_elem for lock_ls */
+	struct list lock_waiting_thread_ls;	/* List of threads that trying to aquire it's lock */
+	struct list_elem lock_waiting_thread_ls_e;			/* list_elem for lock_waiting_thread_ls */
 
 	struct lock * lock_waiting;			/* The lock it tryies to aquire */
 
@@ -104,6 +107,24 @@ struct thread {
 	int nice;
 	int recent_cpu; 					/* Shoulde be fp value */
 	struct list_elem all_th_ls_e;
+
+	/* ========================== About Process Control ========================== */
+	struct list child_ls;				/* list of child processes */
+	struct list_elem child_e;			/* element for child_ls */
+
+	struct thread * parent;				/* parent thread */
+	struct thread * waiting_child;		/* current waiting child (set by wait() syscall) */
+
+	struct semaphore wait_sema;			/* semaphore for wait() system call */
+	int exit_status;					/* exit status */	
+	bool is_terminated;
+	/* =========================================================================== */
+
+	/* ========================== About File system ========================== */
+	struct file *fd_table[FILE_DESCRIPTORS_TABLE_SIZE]; /* 파일 객체 포인터의 배열 */
+	int fd_table_len; /* 현재 테이블에 존재하는 fd값의 최댓값 + 1 */
+	struct file *running_file; /* 현재 실행중인 파일 */
+	/*======================================================================== */
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -118,6 +139,8 @@ struct thread {
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
 	int64_t wakeup_tick;
+	
+	struct intr_frame *if_				/* used for _do_fork() */
 };
 
 /* If false (default), use round-robin scheduler.
