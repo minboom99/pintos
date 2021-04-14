@@ -110,13 +110,7 @@ make_children (void) {
     if (i > EXPECTED_DEPTH_TO_PASS/2) {
       snprintf (child_name, sizeof child_name, "%s_%d_%s", "child", i, "X");
       pid = fork(child_name);
-      // ! ------------------------------------------------------
-      /* ------------------ [For Debugging] ------------------ */
-      // if (pid > 0) {
-      //   printf("pid: %d\n", pid);
-      // }
-      /* ----------------------------------------------------- */
-      // ! ------------------------------------------------------
+
       if (pid > 0 && wait (pid) != -1) {
         fail ("crashed child should return -1.");
       } else if (pid == 0) {
@@ -139,7 +133,6 @@ make_children (void) {
   int depth = wait (pid);
 
   if (depth < 0) {
-    printf("pid: %d, depth: %d\n", pid, depth); // ! for debugging
 	  fail ("Should return > 0.");
   }
 
@@ -159,7 +152,6 @@ main (int argc UNUSED, char *argv[] UNUSED) {
   for (int i = 0; i < EXPECTED_REPETITIONS; i++) {
     int current_run_depth = make_children();
     if (current_run_depth < first_run_depth) {
-      printf("On %dth loop", i+1); // ! for debugging
       fail ("should have forked at least %d times, but %d times forked", 
               first_run_depth, current_run_depth);
     }

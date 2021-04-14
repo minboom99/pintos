@@ -638,19 +638,6 @@ do_schedule(int status) {
 		struct thread *victim =
 			list_entry (list_pop_front (&destruction_req), struct thread, elem);
 		if (!victim->parent) {
-			//printf("%d\n", victim->tid);
-			for (int fd = 0; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
-			{
-				if (victim->fd_table[fd])
-					printf("fd leak at name : %s, pid: %d, fd: %d\n", victim->name, victim->tid, fd);
-			}
-
-			if (!list_empty(&victim->child_ls))
-				printf("child_ls remained: %d\n", victim->tid);
-
-			if (!list_empty(&victim->lock_waiting_thread_ls))
-				printf("lock waiting ls remained: %d\n", victim->tid);
-
 			palloc_free_page(victim);
 		}
 	}
@@ -678,20 +665,20 @@ schedule (void) {
 #endif
 
 	if (curr != next) {
-		/* If the thread we switched from is dying, destroy its struct
-		   thread. This must happen late so that thread_exit() doesn't
-		   pull out the rug under itself.
-		   We just queuing the page free reqeust here because the page is
-		   currently used bye the stack.
-		   The real destruction logic will be called at the beginning of the
-		   schedule(). */
-		if (curr && curr->status == THREAD_DYING && curr != initial_thread) {
-			ASSERT (curr != next);
-			list_push_back (&destruction_req, &curr->elem);
-			list_remove(&curr->all_th_ls_e);
-		}
+          /* If the thread we switched from is dying, destroy its struct
+             thread. This must happen late so that thread_exit() doesn't
+             pull out the rug under itself.
+             We just queuing the page free reqeust here because the page is
+             currently used bye the stack.
+             The real destruction logic will be called at the beginning of the
+             schedule(). */
+          if (curr && curr->status == THREAD_DYING && curr != initial_thread) {
+            ASSERT(curr != next);
+            list_push_back(&destruction_req, &curr->elem);
+            list_remove(&curr->all_th_ls_e);
+          }
 
-		/* Before switching the thread, we first save the information
+                /* Before switching the thread, we first save the information
 		 * of current running. */
 		thread_launch (next);
 	}

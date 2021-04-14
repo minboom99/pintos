@@ -58,7 +58,7 @@ tid_t process_create_initd(const char *file_name)
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	/* Create a new thread to execute FILE_NAME. */
-	strtok_r(file_name, " ", ptr);
+	strtok_r(file_name, " ", &ptr);
 	tid = thread_create(file_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page(fn_copy);
@@ -180,6 +180,7 @@ __do_fork(void *aux)
 	 * TODO:       the resources of parent.*/
 
 	// parent의 fd_table의 element들을 current의 fd_table로 복사하기
+	lock_acquire(&filesys_lock);
 	memset(current->fd_table, 0, sizeof(current->fd_table));
 	// 0이랑 1은 비워둬야함, fd_table_len은 2에서 시작
 	for (int fd = 2; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
@@ -191,6 +192,7 @@ __do_fork(void *aux)
 			goto error;
 		current->fd_table[fd] = fp;
 	}
+	lock_release(&filesys_lock);
 
 	process_init();
 
@@ -264,26 +266,12 @@ int process_wait(tid_t child_tid UNUSED)
 			list_remove(&child->elem);
 		}
 		list_remove(&child->child_e);
-		//printf("%d\n", child->tid);
-
-		for (int fd = 0; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
-		{
-			if (child->fd_table[fd])
-				printf("fd leak at name : %s, pid: %d, fd: %d\n", child->name, child->tid, fd);
-		}
-
-		if (!list_empty(&child->child_ls))
-			printf("child_ls remained: %d\n", child->tid);
-
-		if (!list_empty(&child->lock_waiting_thread_ls))
-			printf("lock waiting ls remained: %d\n", child->tid);
 
 		palloc_free_page(child);
 		return exit_status;
 	}
 
 	parent->waiting_child = child;
-	// sema_down(&parent->load_sema); // ?
 	sema_down(&parent->wait_sema);
 	
 	ASSERT(child->is_terminated);
@@ -292,20 +280,7 @@ int process_wait(tid_t child_tid UNUSED)
 		list_remove(&child->elem);
 	}
 	list_remove(&child->child_e);
-	// printf("%d\n", child->tid);
 	
-	for (int fd = 0; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++)
-	{
-		if (child->fd_table[fd])
-			printf("fd leak at name : %s, pid: %d, fd: %d\n", child->name, child->tid, fd);
-	}
-
-	if (!list_empty(&child->child_ls))
-			printf("child_ls remained: %d\n", child->tid);
-
-	if (!list_empty(&child->lock_waiting_thread_ls))
-		printf("lock waiting ls remained: %d\n", child->tid);
-
 	palloc_free_page(child);
 	
 	return exit_status;
