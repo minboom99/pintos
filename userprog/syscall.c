@@ -35,6 +35,9 @@ void syscall_write_handler(struct intr_frame *);
 void syscall_seek_handler(struct intr_frame *);
 void syscall_tell_handler(struct intr_frame *);
 void syscall_close_handler(struct intr_frame *);
+#ifdef EXTRA2
+void syscall_dup2_handler(struct intr_frame *);
+#endif
 
 /*
  * System call.
@@ -144,6 +147,12 @@ void syscall_handler(struct intr_frame *if_ UNUSED) {
       syscall_close_handler(if_);
       break;
     }
+#ifdef EXTRA2
+    case SYS_DUP2: {
+      syscall_dup2_handler(if_);
+      break;
+    }
+#endif
   }
 }
 
@@ -386,8 +395,7 @@ void syscall_read_handler(struct intr_frame *if_) {
    * or -1 if the file could not be read (due to a condition other than end of
    * file). fd 0 reads from the keyboard using input_getc().
    */
-  // ============================= check validity of arguments
-  // =============================
+  // ====================== check validity of arguments ======================
   int fd = (int)if_->R.rdi;
   if (fd < 0) {
     if_->R.rax = -1;
@@ -396,11 +404,18 @@ void syscall_read_handler(struct intr_frame *if_) {
   void *buffer = if_->R.rsi;
   check_address(buffer);
   unsigned size = (unsigned)if_->R.rdx;
-  // =======================================================================================
+  // =========================================================================
   lock_acquire(&filesys_lock);
 
   int ret = -1;
   if (fd == 0) {
+#ifdef EXTRA2
+    if (thread_current()->std_flags & STDIN_CLOSED) {
+      if_->R.rax = ret;
+      lock_release(&filesys_lock);
+      return;
+    }
+#endif
     // reads from the keyboard using input_getc().
     int num_of_bytes_read = 0;
     char key = input_getc();
@@ -458,6 +473,13 @@ void syscall_write_handler(struct intr_frame *if_) {
 
   int ret = -1;
   if (fd == 1) {
+#ifdef EXTRA2
+    if (thread_current()->std_flags & STDOUT_CLOSED) {
+      if_->R.rax = ret;
+      lock_release(&filesys_lock);
+      return;
+    }
+#endif
     // writes to the console using putbuf().
     putbuf(buffer, size);
     ret = size;
@@ -524,8 +546,65 @@ void syscall_close_handler(struct intr_frame *if_) {
    */
   int fd = (int)if_->R.rdi;
 
+#ifdef EXTRA2
+  if (fd < 0) {
+    return;
+  } else if (fd < 2) {
+    thread_current()->std_flags |=
+        1 << fd;  // 0x01 == stdin closed, 0x02 == stdout closed
+    return;
+  }
+#endif
+
   lock_acquire(&filesys_lock);
   process_close_file(fd);
   lock_release(&filesys_lock);
 }
+
+#ifdef EXTRA2
+void syscall_dup2_handler(struct intr_frame *if_) {
+  // int dup2(int oldfd, int newfd);
+  /*
+   * The dup2() system call creates a copy of the file descriptor oldfd with the
+   * file descriptor number specified in newfd, and returns newfd on success. If
+   * the file descriptor newfd was previously open, it is silently closed before
+   * being reused.
+   *
+   * Note the following points:
+   *
+   * - If oldfd is not a valid file descriptor, then the call fails (returns -1), 
+   * and newfd is not closed. (V)
+   *
+   * - If oldfd is a valid file descriptor, and newfd has the same value as oldfd, 
+   * then dup2() does nothing, and returns newfd. (V)
+   *
+   * Note that duped file descriptors must preserve their semantic after the
+   * forking.
+   * 
+   * newfd가 이미 열려있었으면 newfd를 닫은 후 복제가 된다(silently closed).
+   * 성공시 새 파일 디스크립터(newfd), 오류 시 -1을 반환.
+   * 
+   * stdin과 stdout에 대한 dup2도 고려해줘야함.
+   * 예를 들어, fd=13이 stdout(1)에 연결되어 있는 경우라던가?
+   * 
+   * dup2로 복사된 fd는 같은 완전히 같은 struct file(같은 주소)을 가리키고 있지만 
+   * 한쪽을 닫는다고 다른 한쪽이 닫히지는 않아야 한다.
+   */
+
+  int oldfd = (int)if_->R.rdi;
+  int newfd = (int)if_->R.rsi;
+
+  /* ======================= PLAN ======================= 
+   * 1. oldfd가 유효한 fd인지 체크한다.
+   * 2-1. (invalid oldfd) -1을 return하고 끝낸다.
+   * 2-2. (valid oldfd) 3으로
+   * 3. newfd == oldfd를 체크한다.
+   * 3-1. (true) 아무것도 안하고 newfd를 반환한다.
+   * 3-2. (false) newfd에 oldfd에 연결된 struct file을 할당해준다
+     ==================================================== */
+
+  exit(-1);
+  return;
+}
+#endif
 // ==============================================================================
