@@ -1,11 +1,1 @@
-FAIL
-Kernel panic in run: PANIC at ../../filesys/file.c:150 in file_seek(): assertion `file != NULL' failed.
-Call stack: 0x800421872d 0x800421f9ee 0x800421e22b 0x800421d9ef 0x800421d762 0x4003e0 0x4014e9
-Translation of call stack:
-0x000000800421872d: debug_panic (lib/kernel/debug.c:32)
-0x000000800421f9ee: file_seek (filesys/file.c:151)
-0x000000800421e22b: syscall_seek_handler (userprog/syscall.c:523)
-0x000000800421d9ef: syscall_handler (userprog/syscall.c:140)
-0x000000800421d762: no_sti (userprog/syscall-entry.o:?)
-0x00000000004003e0: (unknown)
-0x00000000004014e9: (unknown)
+PASS

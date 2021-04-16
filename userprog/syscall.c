@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syscall-nr.h>
+#include <stdbool.h>
 
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -18,6 +19,8 @@
 #include "threads/thread.h"
 #include "userprog/gdt.h"
 #include "userprog/process.h"
+#include "threads/malloc.h"
+#include "list.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -35,9 +38,10 @@ void syscall_write_handler(struct intr_frame *);
 void syscall_seek_handler(struct intr_frame *);
 void syscall_tell_handler(struct intr_frame *);
 void syscall_close_handler(struct intr_frame *);
-#ifdef EXTRA2
+
 void syscall_dup2_handler(struct intr_frame *);
-#endif
+bool less_with_fd(const struct list_elem *, const struct list_elem *, void *);
+
 
 /*
  * System call.
@@ -147,12 +151,10 @@ void syscall_handler(struct intr_frame *if_ UNUSED) {
       syscall_close_handler(if_);
       break;
     }
-#ifdef EXTRA2
     case SYS_DUP2: {
       syscall_dup2_handler(if_);
       break;
     }
-#endif
   }
 }
 
@@ -408,29 +410,24 @@ void syscall_read_handler(struct intr_frame *if_) {
   lock_acquire(&filesys_lock);
 
   int ret = -1;
-  if (fd == 0) {
-#ifdef EXTRA2
-    if (thread_current()->std_flags & STDIN_CLOSED) {
-      if_->R.rax = ret;
-      lock_release(&filesys_lock);
-      return;
+
+  struct file *fp = process_get_file(fd);
+  if (fp != NULL)  // 해당 파일이 존재하지 않으면 -1 리턴
+  {
+    if (fp == STDIN) {
+      int num_of_bytes_read = 0;
+      char key = input_getc();
+      while (num_of_bytes_read <= size) {
+        *((char *)buffer + (num_of_bytes_read++)) = key;
+        key = input_getc();
+      }
+      ret = num_of_bytes_read;
     }
-#endif
-    // reads from the keyboard using input_getc().
-    int num_of_bytes_read = 0;
-    char key = input_getc();
-    while (num_of_bytes_read <= size) {
-      *((char *)buffer + (num_of_bytes_read++)) = key;
-      key = input_getc();
-    }
-    ret = num_of_bytes_read;
-  } else if (fd >= 2) {
-    struct file *fp = process_get_file(fd);
-    if (fp != NULL)  // 해당 파일이 존재하지 않으면 -1 리턴
-    {
-      ret = (int)file_read(fp, buffer, (off_t)size);
-    } else {
+    else if (fp == STDOUT) {
       ret = -1;
+    }
+    else {
+      ret = (int)file_read(fp, buffer, (off_t)size);
     }
   }
 
@@ -472,21 +469,18 @@ void syscall_write_handler(struct intr_frame *if_) {
   lock_acquire(&filesys_lock);
 
   int ret = -1;
-  if (fd == 1) {
-#ifdef EXTRA2
-    if (thread_current()->std_flags & STDOUT_CLOSED) {
-      if_->R.rax = ret;
-      lock_release(&filesys_lock);
-      return;
+
+  struct file *fp = process_get_file(fd);
+  if (fp != NULL)  // 해당 파일이 존재하지 않으면 -1 리턴
+  {
+    if (fp == STDOUT) {
+      putbuf(buffer, size);
+      ret = size;
     }
-#endif
-    // writes to the console using putbuf().
-    putbuf(buffer, size);
-    ret = size;
-  } else if (fd >= 2) {
-    struct file *fp = process_get_file(fd);
-    if (fp != NULL)  // 해당 파일이 존재하지 않으면 -1 리턴
-    {
+    else if (fp == STDIN) {
+      ret = -1;
+    }
+    else {
       ret = (int)file_write(fp, buffer, (off_t)size);
     }
   }
@@ -517,9 +511,11 @@ void syscall_seek_handler(struct intr_frame *if_) {
   struct file *fp = process_get_file(fd);  // fd를 이용하여 파일 객체 검색
 
   lock_acquire(&filesys_lock);
-  file_seek(
-      fp,
-      (off_t)poistion);  // 해당 열린 파일의 위치(offset)를 position만큼 이동
+  if (fp && fp != STDIN && fp != STDOUT) {
+    file_seek(
+        fp,
+        (off_t)poistion);  // 해당 열린 파일의 위치(offset)를 position만큼 이동
+  }
   lock_release(&filesys_lock);
 }
 
@@ -546,22 +542,12 @@ void syscall_close_handler(struct intr_frame *if_) {
    */
   int fd = (int)if_->R.rdi;
 
-#ifdef EXTRA2
-  if (fd < 0) {
-    return;
-  } else if (fd < 2) {
-    thread_current()->std_flags |=
-        1 << fd;  // 0x01 == stdin closed, 0x02 == stdout closed
-    return;
-  }
-#endif
-
   lock_acquire(&filesys_lock);
   process_close_file(fd);
   lock_release(&filesys_lock);
 }
 
-#ifdef EXTRA2
+
 void syscall_dup2_handler(struct intr_frame *if_) {
   // int dup2(int oldfd, int newfd);
   /*
@@ -591,8 +577,44 @@ void syscall_dup2_handler(struct intr_frame *if_) {
    * 한쪽을 닫는다고 다른 한쪽이 닫히지는 않아야 한다.
    */
 
+  struct thread * curr = thread_current();
   int oldfd = (int)if_->R.rdi;
   int newfd = (int)if_->R.rsi;
+  struct file * fp;
+  struct fd_entry * entry;
+
+  if (oldfd < 0 || newfd < 0) {
+    if_->R.rax = -1;
+    return;
+  }
+
+  if (oldfd == newfd) {
+    if_->R.rax = newfd;
+    return;
+  }
+
+  lock_acquire(&filesys_lock);
+
+  fp = process_get_file(oldfd);
+  if (!fp) {
+    if_->R.rax = -1;
+    lock_release(&filesys_lock);
+    return;
+  }
+
+  entry = malloc(sizeof(struct fd_entry));
+  if (!entry) {
+    if_->R.rax = -1;
+    lock_release(&filesys_lock);
+    return;
+  }
+  entry->fd = newfd;
+  entry->fp = fp;
+  process_close_file(newfd);
+  list_push_back(&curr->fd_list, &entry->file_elem);
+  curr->file_num++;
+
+  lock_release(&filesys_lock); 
 
   /* ======================= PLAN ======================= 
    * 1. oldfd가 유효한 fd인지 체크한다.
@@ -602,9 +624,6 @@ void syscall_dup2_handler(struct intr_frame *if_) {
    * 3-1. (true) 아무것도 안하고 newfd를 반환한다.
    * 3-2. (false) newfd에 oldfd에 연결된 struct file을 할당해준다
      ==================================================== */
-
-  exit(-1);
-  return;
 }
-#endif
+
 // ==============================================================================

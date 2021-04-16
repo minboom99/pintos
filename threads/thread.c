@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "threads/malloc.h"
 #include "intrinsic.h"
 #include "threads/fixed_point.h"
 #include "threads/flags.h"
@@ -204,6 +205,21 @@ tid_t thread_create(const char *name, int priority, thread_func *function,
   /* Initialize thread. */
   init_thread(t, name, priority);
   tid = t->tid = allocate_tid();
+  #ifdef USERPROG
+  struct fd_entry * stdio;
+  stdio = malloc(sizeof(struct fd_entry));
+  if (!stdio)
+    exit(-1); 
+  stdio->fd = 0;
+  stdio->fp = (struct file *)0xffffffffffffffff;
+  list_push_back(&t->fd_list, &stdio->file_elem);
+  stdio = malloc(sizeof(struct fd_entry));
+  if (!stdio)
+    exit(-1); 
+  stdio->fd = 1;
+  stdio->fp = (struct file *)0xfffffffffffffffe;
+  list_push_back(&t->fd_list, &stdio->file_elem);
+  #endif
 
   /* Call the kernel_thread if it scheduled.
    * Note) rdi is 1st argument, and rsi is 2nd argument. */
@@ -447,11 +463,11 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     list_push_back(&initial_thread->child_ls, &t->child_e);
   }
   t->if_ = NULL;
-
-#ifdef EXTRA2
-  t->std_flags = 0;
-#endif
-
+  #ifdef USERPROG
+  list_init(&t->fd_list);
+  t->file_num = 2;
+  #endif
+ 
   sema_init(&t->wait_sema, 0);
 
   t->waiting_child = NULL;

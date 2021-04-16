@@ -29,9 +29,6 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63     /* Highest priority. */
 
-#define STDIN_CLOSED 0x01 /* a flag indicating stdin closed (no input_getc) */
-#define STDOUT_CLOSED 0x02 /* a flag indicating stdout closed (no putbuf) */
-
 #define FILE_DESCRIPTORS_TABLE_SIZE 128
 
 /* A kernel thread or user process.
@@ -131,17 +128,17 @@ struct thread {
    */
 
   /* ========================== About File system ========================== */
-  struct file
-      *fd_table[FILE_DESCRIPTORS_TABLE_SIZE]; /* 파일 객체 포인터의 배열 */
-#ifdef EXTRA2
-  uint8_t
-      std_flags; /* flags indicates whether stdin, stdout are closed or not */
-#endif
+  // !struct file
+  // !    *fd_table[FILE_DESCRIPTORS_TABLE_SIZE]; /* 파일 객체 포인터의 배열 */
   /*======================================================================== */
+
+ 
 
 #ifdef USERPROG
   /* Owned by userprog/process.c. */
   uint64_t *pml4; /* Page map level 4 */
+  struct list fd_list;
+  int file_num;
 #endif
 #ifdef VM
   /* Table for whole virtual memory owned by thread. */
@@ -154,6 +151,12 @@ struct thread {
   int64_t wakeup_tick;
 
   struct intr_frame *if_ /* used for _do_fork() */
+};
+
+struct fd_entry {
+  int fd;
+  struct file * fp;
+  struct list_elem file_elem;
 };
 
 /* If false (default), use round-robin scheduler.

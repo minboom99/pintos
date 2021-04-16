@@ -3,6 +3,7 @@
 #include "filesys/inode.h"
 #include "threads/malloc.h"
 
+
 /* An open file. */
 struct file {
 	struct inode *inode;        /* File's inode. */

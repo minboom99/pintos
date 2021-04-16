@@ -22,6 +22,7 @@
 #include "userprog/gdt.h"
 #include "userprog/syscall.h"
 #include "userprog/tss.h"
+#include "threads/malloc.h"
 
 #ifdef VM
 #include "vm/vm.h"
@@ -129,9 +130,14 @@ static void __do_fork(void *aux) {
   struct intr_frame if_;
   struct thread *parent = (struct thread *)aux;
   struct thread *current = thread_current();
+  struct list_elem * e;
+  struct fd_entry *parent_fd_entry;
+  struct fd_entry *child_fd_entry;
+  struct file * fp;
   /* TODO: somehow pass the parent_if. (fd.e. process_fork()'s if_) */
   struct intr_frame *parent_if = parent->if_;
   bool succ = true;
+  int same_fp_fd;
 
   /* set parent and child relation */
   current->parent = parent;
@@ -161,14 +167,40 @@ static void __do_fork(void *aux) {
 
   // parent의 fd_table의 element들을 current의 fd_table로 복사하기
   lock_acquire(&filesys_lock);
-  memset(current->fd_table, 0, sizeof(current->fd_table));
-  // 0이랑 1은 비워둬야함, fd_table_len은 2에서 시작
-  for (int fd = 2; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++) {
-    if (!parent->fd_table[fd]) continue;
-    struct file *fp = file_duplicate(parent->fd_table[fd]);
-    if (fp == NULL) goto error;
-    current->fd_table[fd] = fp;
+
+  while (!list_empty(&current->fd_list)) {
+    e = list_front(&current->fd_list);
+    child_fd_entry = list_entry(e, struct fd_entry, file_elem);
+    process_close_file(child_fd_entry->fd);
   }
+
+  for (e=list_begin(&parent->fd_list); e!= list_end(&parent->fd_list); e = list_next(e)) {
+    parent_fd_entry = list_entry(e, struct fd_entry, file_elem);
+    child_fd_entry = malloc(sizeof(struct fd_entry));
+    if (!child_fd_entry) {
+      lock_release(&filesys_lock);
+      goto error;
+    }
+    child_fd_entry->fd = parent_fd_entry->fd;
+    same_fp_fd = fd_with_same_fp(parent_fd_entry->fd, &parent->fd_list);
+    if (parent_fd_entry->fp == STDIN || parent_fd_entry->fp == STDOUT) {
+      fp = parent_fd_entry->fp;
+    }
+    else if (same_fp_fd >= 0){
+      fp = process_get_file(same_fp_fd);
+    }
+    else {
+      fp = file_duplicate(parent_fd_entry->fp);
+    }
+    if (!fp) {
+      free(child_fd_entry);
+      lock_release(&filesys_lock);
+      goto error;
+    }
+    child_fd_entry->fp = fp;
+    list_push_back(&current->fd_list, &child_fd_entry->file_elem);
+  }
+  current->file_num = parent->file_num;
   lock_release(&filesys_lock);
 
   process_init();
@@ -273,6 +305,8 @@ void process_exit(void) {
   /* 실행 중인 파일 close */
   // ! file_close(curr->running_file);
   struct list_elem *e;
+  struct list_elem *file_e;
+  struct fd_entry *entry;
   struct thread *child;
   tid_t pid;
   /*
@@ -296,8 +330,10 @@ void process_exit(void) {
    * fd_table 메모리 해제(malloc 이면)
    */
   lock_acquire(&filesys_lock);
-  for (int fd = 2; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++) {
-    process_close_file(fd);
+  while (!list_empty(&curr->fd_list)) {
+    file_e = list_front(&curr->fd_list);
+    entry = list_entry(file_e, struct fd_entry, file_elem);
+    process_close_file(entry->fd);
   }
   lock_release(&filesys_lock);
 
@@ -760,12 +796,23 @@ char *push_argument_stack(char *parse, struct intr_frame *if_) {
 int process_add_file(struct file *fp) {
   /* 파일 객체 포인터 fp 를 fd 테이블에 추가 */
   struct thread *thr_curr = thread_current();
+  struct fd_entry * entry;
   int fd;
 
   // 빈 자리 찾기
-  for (fd = 2; fd < FILE_DESCRIPTORS_TABLE_SIZE; fd++) {
-    if (thr_curr->fd_table[fd] == NULL) {
-      thr_curr->fd_table[fd] = fp;
+  if (thr_curr->file_num >= FILE_DESCRIPTORS_TABLE_SIZE)
+    return -1;
+
+  for (fd = 0; ; fd++) {
+    if (process_get_file(fd) == NULL) {
+      entry = malloc(sizeof(struct fd_entry));
+      if (!entry)
+        return -1;
+
+      entry->fd = fd;
+      entry->fp = fp;
+      list_push_back(&thr_curr->fd_list, &entry->file_elem);
+      thr_curr->file_num ++;
       return fd;
     }
   }
@@ -778,21 +825,49 @@ struct file *process_get_file(int fd) {
   /* fd에 해당하는 파일 객체를 리턴 */
   /* 없으면 NULL 리턴 */
   struct thread *thr_curr = thread_current();
+  struct list_elem *e;
 
-  if (fd <= 1 || fd >= FILE_DESCRIPTORS_TABLE_SIZE) return NULL;
-
-  return thr_curr->fd_table[fd];
+  if (fd < 0) return NULL;
+  for (e=list_begin(&thr_curr->fd_list); e!= list_end(&thr_curr->fd_list); e = list_next(e)) {
+    if (fd == list_entry(e, struct fd_entry, file_elem)->fd) {
+      return list_entry(e, struct fd_entry, file_elem)->fp;
+    }
+  }
+  return NULL;
 }
 
 void process_close_file(int fd) {
   /* fd에 해당하는 파일을 닫음 */
   /* file_descriptors_table에서 해당 엔트리 초기화 */
   struct thread *thr_curr = thread_current();
+  struct file *fp;
+  struct list_elem *e;
+  struct fd_entry *entry;
 
-  if (fd <= 1 || fd >= FILE_DESCRIPTORS_TABLE_SIZE) return;
+  if (fd < 0 ) return;
 
-  file_close(thr_curr->fd_table[fd]);
-  thr_curr->fd_table[fd] = NULL;
+  fp = NULL;
+
+  if (!list_empty(&thr_curr->fd_list)) {
+    for (e = list_begin(&thr_curr->fd_list); e != list_end(&thr_curr->fd_list); e = list_next(e)) {
+      entry = list_entry(e, struct fd_entry, file_elem);
+      if (fd == entry->fd) {
+        fp = entry->fp;
+        break;
+      }
+    }
+  }
+
+  if (!fp)
+    return;
+
+  if (!process_exist_same_fp(fd) && fp != STDIN && fp != STDOUT) {
+    file_close(fp);
+  }
+
+  list_remove(e);
+  thr_curr->file_num--;
+  free(entry);
 }
 
 struct thread *find_child_with_pid(struct thread *parent, int child_pid) {
@@ -808,4 +883,64 @@ struct thread *find_child_with_pid(struct thread *parent, int child_pid) {
     e = e->next;
   }
   return NULL;
+}
+
+bool process_exist_same_fp(int fd) {
+  struct thread * curr = thread_current();
+  struct file *fp;
+  struct list_elem *e;
+  struct fd_entry *entry;
+
+  fp = NULL;
+
+  for (e=list_begin(&curr->fd_list); e!= list_end(&curr->fd_list); e = list_next(e)) {
+    entry = list_entry(e, struct fd_entry, file_elem);
+    if (fd == entry->fd) {
+      fp = entry->fp;
+      break;
+    }
+  }
+
+  if (!fp)
+    return false;
+
+  for (e=list_begin(&curr->fd_list); e!= list_end(&curr->fd_list); e = list_next(e)) {
+    entry = list_entry(e, struct fd_entry, file_elem);
+    if (fp == entry->fp && fd != entry->fd) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+int fd_with_same_fp(int fd, struct list * fd_list) {
+  struct file *fp;
+  struct list_elem *e;
+  struct fd_entry *entry;
+
+  fp = NULL;
+
+  for (e=list_begin(fd_list); e!= list_end(fd_list); e = list_next(e)) {
+    entry = list_entry(e, struct fd_entry, file_elem);
+    if (fd == entry->fd) {
+      fp = entry->fp;
+      break;
+    }
+  }
+
+  if (!fp)
+    return -1;
+
+  for (e=list_begin(fd_list); e!= list_end(fd_list); e = list_next(e)) {
+    entry = list_entry(e, struct fd_entry, file_elem);
+    if (fd == entry->fd) {
+      return -1;
+    }
+    if (fp == entry->fp && fd != entry->fd) {
+      return entry->fd;
+    }
+  }
+
+  return -1;
 }
