@@ -28,8 +28,7 @@
 #include "vm/vm.h"
 #endif
 
-#define MAX_ARG_NUM \
-  30  // ! 나중에 문제되면 argument-passing malloc으로 하는 식으로 바꾸기
+#define MAX_ARG_NUM 30
 
 static void process_cleanup(void);
 static bool load(const char *file_name, struct intr_frame *if_);
@@ -209,7 +208,6 @@ static void __do_fork(void *aux) {
   if (succ) do_iret(&if_);
 error:
   exit(-1);
-  // thread_exit();
 }
 
 /* Switch the current execution context to the f_name.
@@ -232,7 +230,6 @@ int process_exec(void *f_name) {
   /* And then load the binary */
   success = load(file_name, &_if);
 
-  // ! hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true); // for debugging
 
   /* If load failed, quit. */
   palloc_free_page(file_name);
@@ -303,18 +300,15 @@ void process_exit(void) {
    * TODO: We recommend you to implement process resource cleanup here. */
 
   /* 실행 중인 파일 close */
-  // ! file_close(curr->running_file);
   struct list_elem *e;
   struct list_elem *file_e;
   struct fd_entry *entry;
   struct thread *child;
   tid_t pid;
-  /*
-   * 1. t에 child가 존재하는지 판단.
-   * 2. 존재한다면, 각각의 child에 대하여(loop) child가 terminated 상태라면
-   * free를 해준다. 아니라면, child의 parent를 NULL로 할당해준다.
-   */
 
+
+  /* Check if current process has child processes. */
+  /* If so, wait them.                             */
   if (!list_empty(&curr->child_ls)) {
     e = list_front(&curr->child_ls);
     while (e != &curr->child_ls.tail) {
@@ -325,10 +319,7 @@ void process_exit(void) {
     }
   }
 
-  /*
-   * 프로세스에 열린 모든 파일을 닫음
-   * fd_table 메모리 해제(malloc 이면)
-   */
+  /* Close and free all files that are opend */
   lock_acquire(&filesys_lock);
   while (!list_empty(&curr->fd_list)) {
     file_e = list_front(&curr->fd_list);
@@ -463,9 +454,7 @@ static bool load(const char *file_name, struct intr_frame *if_) {
   if (t->pml4 == NULL) goto done;
   process_activate(thread_current());
 
-  /* file_name에서 부르려는 application의 이름 부분만 parsing 해오기 */
   argument = strtok_r(file_name, " ", &next_p);
-  // strlcpy (thread_current()->name, file_name, sizeof thread_current()->name);
 
   lock_acquire(&filesys_lock);
   /* Open executable file. */
@@ -475,9 +464,7 @@ static bool load(const char *file_name, struct intr_frame *if_) {
     printf("load: %s: open failed\n", file_name);
     goto done;
   }
-  /* thread 구조체의 running_file을 현재 실행할 파일로 초기화 */
-  // t->running_file = file;
-  /* 이 파일에 대한 write 거부 */
+
   file_deny_write(file);
   lock_release(&filesys_lock);
 
@@ -556,23 +543,23 @@ static bool load(const char *file_name, struct intr_frame *if_) {
   }
   argv[argc] = NULL;
 
-  /* Alignment 넣기(Address를 8배수로 맞춰주기) */
+  /* Make alignment */
   while (if_->rsp % 8 != 0) {
     if_->rsp--;
     *(char *)if_->rsp = 0;
   }
 
-  /* argv를 스택에 집어넣기(끝에서부터 집어넣어야 함) */
+  /* Put argv into stack */
   for (int j = argc; j > -1; j--) {
     if_->rsp -= 8;
-    *(uint64_t *)if_->rsp = argv[j];  // x86-64니까 64bit pointer를 씀
+    *(uint64_t *)if_->rsp = argv[j];
   }
 
-  /* rdi랑 rsi 세팅하기 */
+  /* Set rid and rsi */
   if_->R.rdi = argc;
   if_->R.rsi = if_->rsp;
 
-  /* return address 집어넣기*/
+  /* Push return address*/
   if_->rsp -= 8;
   *(uint64_t *)if_->rsp = NULL;
   // ============================================================================
@@ -785,7 +772,6 @@ static bool setup_stack(struct intr_frame *if_) {
 char *push_argument_stack(char *parse, struct intr_frame *if_) {
   int parse_len = strlen(parse);
   int fd;
-  // string parse를 stack에 넣기
   for (fd = parse_len; fd > -1; fd--) {
     if_->rsp = if_->rsp - 1;
     *(char *)if_->rsp = parse[fd];
@@ -794,12 +780,10 @@ char *push_argument_stack(char *parse, struct intr_frame *if_) {
 }
 
 int process_add_file(struct file *fp) {
-  /* 파일 객체 포인터 fp 를 fd 테이블에 추가 */
   struct thread *thr_curr = thread_current();
   struct fd_entry * entry;
   int fd;
 
-  // 빈 자리 찾기
   if (thr_curr->file_num >= FILE_DESCRIPTORS_TABLE_SIZE)
     return -1;
 
@@ -816,14 +800,10 @@ int process_add_file(struct file *fp) {
       return fd;
     }
   }
-
-  /* fd 리턴 */
   return -1;
 }
 
 struct file *process_get_file(int fd) {
-  /* fd에 해당하는 파일 객체를 리턴 */
-  /* 없으면 NULL 리턴 */
   struct thread *thr_curr = thread_current();
   struct list_elem *e;
 
@@ -837,8 +817,6 @@ struct file *process_get_file(int fd) {
 }
 
 void process_close_file(int fd) {
-  /* fd에 해당하는 파일을 닫음 */
-  /* file_descriptors_table에서 해당 엔트리 초기화 */
   struct thread *thr_curr = thread_current();
   struct file *fp;
   struct list_elem *e;
