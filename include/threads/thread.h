@@ -121,17 +121,10 @@ struct thread {
 
   struct semaphore wait_sema; /* semaphore for wait() system call */
   // struct semaphore load_sema; 		/* semaphore for calling load()
-  // */
+
   int exit_status; /* exit status */
   bool is_terminated;
-  /* ===========================================================================
-   */
-
-  /* ========================== About File system ========================== */
-  // !struct file
-  // !    *fd_table[FILE_DESCRIPTORS_TABLE_SIZE]; /* 파일 객체 포인터의 배열 */
-  /*======================================================================== */
-
+  /* ===========================================================================*/
  
 
 #ifdef USERPROG

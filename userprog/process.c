@@ -230,7 +230,6 @@ int process_exec(void *f_name) {
   /* And then load the binary */
   success = load(file_name, &_if);
 
-
   /* If load failed, quit. */
   palloc_free_page(file_name);
   if (!success) {
@@ -327,14 +326,14 @@ void process_exit(void) {
     process_close_file(entry->fd);
   }
   lock_release(&filesys_lock);
+  
+  process_cleanup();
 
   curr->is_terminated = true;
 
   if (curr->parent && curr->parent->waiting_child == curr) {
     sema_up(&curr->parent->wait_sema);
   }
-
-  process_cleanup();
 }
 
 /* Free the current process's resources. */
@@ -454,6 +453,10 @@ static bool load(const char *file_name, struct intr_frame *if_) {
   if (t->pml4 == NULL) goto done;
   process_activate(thread_current());
 
+  #ifdef VM
+  supplemental_page_table_init(&t->spt);
+  #endif
+
   argument = strtok_r(file_name, " ", &next_p);
 
   lock_acquire(&filesys_lock);
@@ -567,7 +570,7 @@ static bool load(const char *file_name, struct intr_frame *if_) {
 
 done:
   /* We arrive here whether the load is successful or not. */
-  file_close(file);
+  file_close(file);       //! 클로즈 나중에 하도록 변경
   return success;
 }
 
@@ -711,6 +714,35 @@ static bool lazy_load_segment(struct page *page, void *aux) {
   /* TODO: Load the segment from the file */
   /* TODO: This called when the first page fault occurs on address VA. */
   /* TODO: VA is available when calling this function. */
+  ASSERT(aux);
+
+  struct load_aux * load_aux = (struct load_aux *)aux;
+  struct file * file = load_aux -> file;
+	size_t page_read_bytes = load_aux -> page_read_bytes;
+	size_t page_zero_bytes = load_aux -> page_zero_bytes;
+  off_t ofs = load_aux -> ofs;
+  bool writable = load_aux -> writable;
+  void * va = page -> va;
+
+
+  /* Get a page of memory. */
+  // uint8_t *kpage = palloc_get_page(PAL_USER);
+  // if (kpage == NULL)
+  //   return false;
+
+
+  /* Load this page. */
+  file_seek(file, ofs);
+  int bytes = file_read(file, va, page_read_bytes);
+  if (bytes != (int)page_read_bytes) {
+    destroy(page);
+    free(aux);
+    return false;
+  }
+  memset(va + page_read_bytes, 0, page_zero_bytes);
+  free(aux);
+
+  return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -734,6 +766,8 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
   ASSERT(pg_ofs(upage) == 0);
   ASSERT(ofs % PGSIZE == 0);
 
+  file_seek(file, ofs);
+
   while (read_bytes > 0 || zero_bytes > 0) {
     /* Do calculate how to fill this page.
      * We will read PAGE_READ_BYTES bytes from FILE
@@ -742,7 +776,20 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
     size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
     /* TODO: Set up aux to pass information to the lazy_load_segment. */
-    void *aux = NULL;
+    struct load_aux *aux = NULL;
+    aux = malloc(sizeof(struct load_aux)); /* load_aux 생성 (malloc 사용) */
+    if (aux == NULL) {
+      return false;
+    }
+
+    /* vm_entry 멤버들 설정, 가상페이지가 요구될 때 읽어야 할 파일의 오프셋과 사이즈, 
+      마지막에 패딩할 제로 바이트 등등 */
+    aux->file = file;
+    aux->page_read_bytes = page_read_bytes;
+    aux->page_zero_bytes = page_zero_bytes;
+    aux->ofs = ofs;
+    aux->writable = writable;
+
     if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable,
                                         lazy_load_segment, aux))
       return false;
@@ -751,6 +798,7 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
     read_bytes -= page_read_bytes;
     zero_bytes -= page_zero_bytes;
     upage += PGSIZE;
+    ofs += read_bytes;
   }
   return true;
 }
@@ -765,8 +813,21 @@ static bool setup_stack(struct intr_frame *if_) {
    * TODO: You should mark the page is stack. */
   /* TODO: Your code goes here */
 
+  /*
+   * The first stack page need not be allocated lazily. 
+   * You can allocate and initialize it with the command line arguments at load time,
+   * with no need to wait for it to be faulted in. 
+   * You might need to provide the way to identify the stack. 
+   * You can use the auxillary markers in vm_type of vm/vm.h (e.g. VM_MARKER_0) to mark the page.
+  */
+  success = vm_alloc_page(VM_ANON, stack_bottom, true);
+  if (success) {
+    if_->rsp = USER_STACK;
+  }
+
   return success;
 }
+
 #endif /* VM */
 
 char *push_argument_stack(char *parse, struct intr_frame *if_) {

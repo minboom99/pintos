@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include "threads/palloc.h"
 
+#include <hash.h>
+#include "threads/synch.h"
+
 enum vm_type {
 	/* page not initialized */
 	VM_UNINIT = 0,
@@ -41,9 +44,11 @@ struct thread;
  * uninit_page, file_page, anon_page, and page cache (project4).
  * DO NOT REMOVE/MODIFY PREDEFINED MEMBER OF THIS STRUCTURE. */
 struct page {
+	struct hash_elem h_elem;
 	const struct page_operations *operations;
 	void *va;              /* Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
+	bool writable;
 
 	/* Your implementation */
 
@@ -85,6 +90,17 @@ struct page_operations {
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
 struct supplemental_page_table {
+	struct hash pages;
+	struct lock hash_lock;
+};
+
+/* struct for lazy_load_segment function */
+struct load_aux {
+	struct file * file;
+	size_t page_read_bytes;
+	size_t page_zero_bytes;
+	off_t ofs;
+	bool writable;
 };
 
 #include "threads/thread.h"
@@ -108,5 +124,11 @@ bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
+
+/*------------------- Functions for Page Hash Table ----------------------------------*/
+unsigned page_hash (const struct hash_elem *p_, void *aux UNUSED);
+bool page_less (const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUSED);
+/*------------------------------------------------------------------------------------*/
+
 
 #endif  /* VM_VM_H */

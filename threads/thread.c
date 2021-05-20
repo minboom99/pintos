@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <hash.h>
 
 #include "threads/malloc.h"
 #include "intrinsic.h"
@@ -18,6 +19,9 @@
 #ifdef USERPROG
 #include "userprog/process.h"
 #include "userprog/syscall.h"
+#endif
+#ifdef VM
+#include "vm/vm.h"
 #endif
 
 /* Random value for struct thread's `magic' member.

@@ -70,6 +70,9 @@ void check_address(const void *addr) {
    * you must still be sure to release the lock or free the page of
    * memory(thread_exit에서 해줌).
    */
+  
+  // TODO : addr에 해당하는 struct page가 존재하는지 찾기
+
   uint64_t *pml4 = thread_current()->pml4;
   if (addr)
     if (is_user_vaddr(addr))
