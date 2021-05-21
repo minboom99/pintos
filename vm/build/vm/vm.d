@@ -8,5 +8,6 @@ vm/vm.o: ../../vm/vm.c ../../include/threads/malloc.h \
  ../../include/vm/file.h ../../include/filesys/file.h \
  ../../include/filesys/off_t.h ../../include/threads/thread.h \
  ../../include/threads/interrupt.h ../../include/vm/inspect.h \
- ../../include/threads/mmu.h ../../include/threads/pte.h \
- ../../include/threads/vaddr.h ../../include/threads/loader.h
+ ../../include/lib/string.h ../../include/threads/mmu.h \
+ ../../include/threads/pte.h ../../include/threads/vaddr.h \
+ ../../include/threads/loader.h ../../include/userprog/syscall.h

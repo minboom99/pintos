@@ -6,4 +6,7 @@ vm/uninit.o: ../../vm/uninit.c ../../include/vm/vm.h \
  ../../include/vm/uninit.h ../../include/vm/anon.h \
  ../../include/vm/file.h ../../include/filesys/file.h \
  ../../include/filesys/off_t.h ../../include/threads/thread.h \
- ../../include/lib/debug.h ../../include/threads/interrupt.h
+ ../../include/lib/debug.h ../../include/threads/interrupt.h \
+ ../../include/threads/malloc.h ../../include/threads/mmu.h \
+ ../../include/threads/pte.h ../../include/threads/vaddr.h \
+ ../../include/threads/loader.h
