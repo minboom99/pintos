@@ -212,6 +212,7 @@ disk_read (struct disk *d, disk_sector_t sec_no, void *buffer) {
 	ASSERT (buffer != NULL);
 
 	c = d->channel;
+	
 	lock_acquire (&c->lock);
 	select_sector (d, sec_no);
 	issue_pio_command (c, CMD_READ_SECTOR_RETRY);

@@ -43,6 +43,8 @@
 /* Returns true if VADDR is a kernel virtual address. */
 #define is_kernel_vaddr(vaddr) ((uint64_t)(vaddr) >= KERN_BASE)
 
+#define is_user_stack_vaddr(vaddr) ((vaddr < USER_STACK) && vaddr >= USER_STACK - (1 << 20))
+
 // FIXME: add checking
 /* Returns kernel virtual address at which physical address PADDR
  *  is mapped. */

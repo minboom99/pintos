@@ -21,6 +21,8 @@
 #include "userprog/process.h"
 #include "threads/malloc.h"
 #include "list.h"
+#include "vm/vm.h"
+#include "threads/vaddr.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -40,8 +42,12 @@ void syscall_tell_handler(struct intr_frame *);
 void syscall_close_handler(struct intr_frame *);
 
 void syscall_dup2_handler(struct intr_frame *);
-bool less_with_fd(const struct list_elem *, const struct list_elem *, void *);
 
+
+#ifdef VM
+void syscall_mmap_handler(struct intr_frame *);
+void syscall_munmap_handler(struct intr_frame *);
+#endif
 
 /*
  * System call.
@@ -58,27 +64,65 @@ bool less_with_fd(const struct list_elem *, const struct list_elem *, void *);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
-void check_address(const void *addr) {
+#ifndef VM
+void check_address(const void *addr, struct intr_frame *if_ UNUSED) {
   /*
    * A user can pass a null pointer, a pointer to unmapped virtual memory,
    * or a pointer to kernel virtual address space (above KERN_BASE).
+   *
    * All of these types of invalid pointers must be rejected
    * without harm to the kernel or other running processes,
    * by terminating the offending process and freeing its resources.
+   *
    * For example, suppose that your system call has acquired a lock or allocated
    * memory with malloc(). If you encounter an invalid user pointer afterward,
    * you must still be sure to release the lock or free the page of
    * memory(thread_exit에서 해줌).
    */
-  
-  // TODO : addr에 해당하는 struct page가 존재하는지 찾기
 
   uint64_t *pml4 = thread_current()->pml4;
+
   if (addr)
     if (is_user_vaddr(addr))
-      if (pml4_get_page(pml4, addr)) return;
+      if (pml4_get_page(pml4, addr)) return NULL;
   exit(-1);
 }
+#else
+struct page *check_address(const void *addr, struct intr_frame *if_) {
+  uint64_t *pml4 = thread_current()->pml4;
+  struct page * page = spt_find_page(&thread_current()->spt, addr);
+  
+  if (!addr || is_kernel_vaddr(addr))
+    exit(-1);
+
+  if (!page) {
+    if (!is_user_stack_vaddr(addr) || (addr < if_->rsp - 8))
+      exit(-1);
+    return page;
+  }
+  // page 존재
+  if (VM_TYPE(page->operations->type) == VM_UNINIT) {
+    vm_claim_page(page->va);
+  }
+  return page;
+}
+
+void check_valid_buffer(void *buffer, unsigned size, struct intr_frame *if_,
+                        bool to_write) {
+  /* size가 PGSIZE보다 클 수도 있음 */
+  while (size > 0) {
+    size_t page_check_bytes = size < PGSIZE ? size : PGSIZE;
+    struct page *page = check_address(buffer, if_);
+
+    // buffer에 쓰기를 하려고 했는데 writable이 아닌 경우
+    if (to_write && page && !page->writable) exit(-1);
+
+    /* advance */
+    size -= page_check_bytes;
+    buffer += page_check_bytes;
+  }
+}
+#endif
 
 void syscall_init(void) {
   write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48 | ((uint64_t)SEL_KCSEG)
@@ -95,8 +139,11 @@ void syscall_init(void) {
 }
 
 /* The main system call interface */
-void syscall_handler(struct intr_frame *if_ UNUSED) {
+void syscall_handler(struct intr_frame *if_) {
+  thread_current()->user_rsp = if_->rsp;
   int syscall_num = if_->R.rax;
+
+  check_address(if_->rsp, if_);
   switch (syscall_num) {
     case SYS_HALT: {
       syscall_halt_handler();
@@ -158,6 +205,16 @@ void syscall_handler(struct intr_frame *if_ UNUSED) {
       syscall_dup2_handler(if_);
       break;
     }
+#ifdef  VM
+    case SYS_MMAP: {
+      syscall_mmap_handler(if_);
+      break;
+    }
+    case SYS_MUNMAP: {
+      syscall_munmap_handler(if_);
+      break;
+    }
+#endif
   }
 }
 
@@ -220,7 +277,7 @@ void syscall_fork_handler(struct intr_frame *if_) {
   // Check validity of the pointer argument
   const char *thr_name = if_->R.rdi;
   int tid;
-  check_address((void *)thr_name);
+  check_address((void *)thr_name, if_);
   // Create new process which is the clone of current process with the name
   // THREAD_NAME.
   struct thread *thr_current = thread_current();
@@ -254,7 +311,7 @@ void syscall_exec_handler(struct intr_frame *if_) {
    */
 
   char *cmd_line = if_->R.rdi;
-  check_address((void *)cmd_line);
+  check_address((void *)cmd_line, if_);
 
   char *name = palloc_get_page(0);
   if (!name) {
@@ -275,7 +332,7 @@ void syscall_wait_handler(struct intr_frame *if_) {
 // ================================ FILE SYSTEM ================================
 void syscall_create_handler(struct intr_frame *if_) {
   const char *filename = if_->R.rdi;
-  check_address((void *)filename);
+  check_address((void *)filename, if_);
   unsigned initial_size = (unsigned)if_->R.rsi;
 
   lock_acquire(&filesys_lock);
@@ -285,7 +342,7 @@ void syscall_create_handler(struct intr_frame *if_) {
 
 void syscall_remove_handler(struct intr_frame *if_) {
   const char *filename = if_->R.rdi;
-  check_address((void *)filename);
+  check_address((void *)filename, if_);
 
   lock_acquire(&filesys_lock);
   if_->R.rax = filesys_remove(filename);
@@ -294,7 +351,7 @@ void syscall_remove_handler(struct intr_frame *if_) {
 
 void syscall_open_handler(struct intr_frame *if_) {
   const char *filename = if_->R.rdi;
-  check_address((void *)filename);
+  check_address((void *)filename, if_);
 
   lock_acquire(&filesys_lock);
   struct file *fp = filesys_open(filename); 
@@ -338,11 +395,15 @@ void syscall_read_handler(struct intr_frame *if_) {
     return;
   }
   void *buffer = if_->R.rsi;
-  check_address(buffer);
   unsigned size = (unsigned)if_->R.rdx;
+
+  #ifndef VM
+  check_address(buffer, if_);
+  #else
+  check_valid_buffer(buffer, size, if_, true);
+  #endif
   // =========================================================================
   lock_acquire(&filesys_lock);
-
   int ret = -1;
 
   struct file *fp = process_get_file(fd);
@@ -364,7 +425,6 @@ void syscall_read_handler(struct intr_frame *if_) {
       ret = (int)file_read(fp, buffer, (off_t)size);
     }
   }
-
   if_->R.rax = ret;
   lock_release(&filesys_lock);
 }
@@ -378,8 +438,12 @@ void syscall_write_handler(struct intr_frame *if_) {
     return;
   }
   const void *buffer = if_->R.rsi;
-  check_address(buffer);
   unsigned size = (unsigned)if_->R.rdx;
+  #ifndef VM
+  check_address(buffer, if_);
+  #else
+  check_valid_buffer(buffer, size, if_, false);
+  #endif
   // =======================================================================================
   lock_acquire(&filesys_lock);
 
@@ -436,7 +500,6 @@ void syscall_close_handler(struct intr_frame *if_) {
   lock_release(&filesys_lock);
 }
 
-
 void syscall_dup2_handler(struct intr_frame *if_) {
   struct thread * curr = thread_current();
   int oldfd = (int)if_->R.rdi;
@@ -479,3 +542,66 @@ void syscall_dup2_handler(struct intr_frame *if_) {
 }
 
 // ==============================================================================
+
+#ifdef VM
+
+/* 
+ * addr, size를 check하여 다른 page를 침범하지 않는지 먼저 검사.
+ * addr는 무조건 page-alligned 되어있어야 함.
+ * do_mmap을 호출하여 실행.
+ * If successful, this function returns the virtual address where the file is mapped.
+ * On failure, it must return NULL which is not a valid address to map a file.
+ */
+void syscall_mmap_handler(struct intr_frame * if_) {
+  void *addr = (void *) if_->R.rdi;
+  size_t length = (size_t) if_->R.rsi;
+  int writable = (int) if_->R.rdx;
+  int fd = (int) if_->R.r10;
+  off_t offset = (off_t) if_->R.r8;
+
+  int remaining_length = length;
+  void *chk_addr = addr;
+
+  if_->R.rax = NULL;
+
+  // Your mmap should also fail when length is zero.
+  if (remaining_length <= 0)
+    return;
+  
+  if (offset % PGSIZE != 0)
+    return;
+
+  // It must fail if addr is not page-aligned 
+  if (addr != pg_round_down(addr))
+    return;
+  // It must fail if the range of pages mapped overlaps any existing set of mapped pages
+  while(remaining_length > 0) {
+    if (spt_find_page(&thread_current()->spt, chk_addr) || is_user_stack_vaddr(chk_addr) || is_kernel_vaddr(chk_addr))
+      return;
+    remaining_length -= PGSIZE;
+    chk_addr += PGSIZE;
+  }
+  
+  struct file* file = process_get_file(fd);
+  // file이 존재하는지, stdin, stdout인지 체크
+  if (!file || file == STDIN || file == STDOUT)
+    return;
+
+  // A call to mmap may fail if the file opened as fd has a length of zero bytes.
+  off_t file_len = file_length(file);
+  if (file_len - offset <= 0)
+    return;
+  
+  addr = do_mmap(addr, length, writable, file, offset); // do_mmap 실패하면 알아서 NULL 뱉음
+  if_->R.rax = addr;
+  return;
+}
+
+
+void syscall_munmap_handler(struct intr_frame * if_) {
+  void *addr = if_->R.rdi;
+  // addr must be the virtual address returned by a previous call to mmap by the
+  // same process that has not yet been unmapped.
+  do_munmap(addr);
+}
+#endif

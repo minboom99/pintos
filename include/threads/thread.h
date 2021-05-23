@@ -136,6 +136,7 @@ struct thread {
 #ifdef VM
   /* Table for whole virtual memory owned by thread. */
   struct supplemental_page_table spt;
+  struct list mmap_list;
 #endif
 
   /* Owned by thread.c. */
@@ -143,13 +144,20 @@ struct thread {
   unsigned magic;       /* Detects stack overflow. */
   int64_t wakeup_tick;
 
-  struct intr_frame *if_ /* used for _do_fork() */
+  struct intr_frame *if_; /* used for _do_fork() */
+  void *user_rsp;
 };
 
 struct fd_entry {
   int fd;
   struct file * fp;
   struct list_elem file_elem;
+};
+
+struct mmap_file {
+  struct file* fp;
+  struct page* file_page_head;
+  struct list_elem mmap_list_elem;
 };
 
 /* If false (default), use round-robin scheduler.

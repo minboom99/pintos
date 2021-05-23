@@ -166,13 +166,11 @@ static void __do_fork(void *aux) {
 
   // parent의 fd_table의 element들을 current의 fd_table로 복사하기
   lock_acquire(&filesys_lock);
-
   while (!list_empty(&current->fd_list)) {
     e = list_front(&current->fd_list);
     child_fd_entry = list_entry(e, struct fd_entry, file_elem);
     process_close_file(child_fd_entry->fd);
   }
-
   for (e=list_begin(&parent->fd_list); e!= list_end(&parent->fd_list); e = list_next(e)) {
     parent_fd_entry = list_entry(e, struct fd_entry, file_elem);
     child_fd_entry = malloc(sizeof(struct fd_entry));
@@ -299,12 +297,11 @@ void process_exit(void) {
    * TODO: We recommend you to implement process resource cleanup here. */
 
   /* 실행 중인 파일 close */
-  struct list_elem *e;
   struct list_elem *file_e;
   struct fd_entry *entry;
+  struct list_elem *e;
   struct thread *child;
   tid_t pid;
-
 
   /* Check if current process has child processes. */
   /* If so, wait them.                             */
@@ -318,19 +315,31 @@ void process_exit(void) {
     }
   }
 
+  process_cleanup();
+
   /* Close and free all files that are opend */
   lock_acquire(&filesys_lock);
   while (!list_empty(&curr->fd_list)) {
+    // process_close_file에서 list_remove가 호출되기 때문에 pop_front를 사용하지
+    // 않는다.
     file_e = list_front(&curr->fd_list);
     entry = list_entry(file_e, struct fd_entry, file_elem);
     process_close_file(entry->fd);
   }
+#ifdef VM
+  struct mmap_file *mmap_file;
+  struct file *fp;
+  /* mmap_list를 부순다. */
+  while (!list_empty(&curr->mmap_list)) {
+    file_e = list_pop_front(&curr->mmap_list);
+    mmap_file = list_entry(file_e, struct mmap_file, mmap_list_elem);
+    file_close(mmap_file->fp);
+    free(mmap_file);
+  }
+#endif
   lock_release(&filesys_lock);
-  
-  process_cleanup();
 
   curr->is_terminated = true;
-
   if (curr->parent && curr->parent->waiting_child == curr) {
     sema_up(&curr->parent->wait_sema);
   }
@@ -427,9 +436,15 @@ struct ELF64_PHDR {
 
 static bool setup_stack(struct intr_frame *if_);
 static bool validate_segment(const struct Phdr *, struct file *);
+#ifndef VM
 static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
                          uint32_t read_bytes, uint32_t zero_bytes,
                          bool writable);
+#else
+static bool load_segment(const char *file, off_t ofs, uint8_t *upage,
+                         uint32_t read_bytes, uint32_t zero_bytes,
+                         bool writable);
+#endif
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
  * Stores the executable's entry point into *RIP
@@ -469,7 +484,6 @@ static bool load(const char *file_name, struct intr_frame *if_) {
   }
 
   file_deny_write(file);
-  lock_release(&filesys_lock);
 
   /* Read and verify executable header. */
   if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
@@ -522,14 +536,21 @@ static bool load(const char *file_name, struct intr_frame *if_) {
             read_bytes = 0;
             zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
           }
+          #ifndef VM
           if (!load_segment(file, file_page, (void *)mem_page, read_bytes,
                             zero_bytes, writable))
             goto done;
+          #else
+          if (!load_segment(file_name, file_page, (void *)mem_page, read_bytes,
+                            zero_bytes, writable))
+            goto done;
+          #endif
         } else
           goto done;
         break;
     }
   }
+  lock_release(&filesys_lock);
 
   /* Set up stack. */
   if (!setup_stack(if_)) goto done;
@@ -570,7 +591,7 @@ static bool load(const char *file_name, struct intr_frame *if_) {
 
 done:
   /* We arrive here whether the load is successful or not. */
-  file_close(file);       //! 클로즈 나중에 하도록 변경
+  file_close(file); //! 클로즈 나중에 하도록 변경
   return success;
 }
 
@@ -709,37 +730,40 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
-
 static bool lazy_load_segment(struct page *page, void *aux) {
   /* TODO: Load the segment from the file */
   /* TODO: This called when the first page fault occurs on address VA. */
   /* TODO: VA is available when calling this function. */
   ASSERT(aux);
+  ASSERT(page);
 
-  struct load_aux * load_aux = (struct load_aux *)aux;
-  struct file * file = load_aux -> file;
-	size_t page_read_bytes = load_aux -> page_read_bytes;
-	size_t page_zero_bytes = load_aux -> page_zero_bytes;
-  off_t ofs = load_aux -> ofs;
-  bool writable = load_aux -> writable;
-  void * va = page -> va;
+  struct load_aux *load_aux = (struct load_aux *)aux;
+  char *file_name = load_aux->file_name;
+  size_t page_read_bytes = load_aux->page_read_bytes;
+  size_t page_zero_bytes = load_aux->page_zero_bytes;
+  off_t ofs = load_aux->ofs;
+  void *kva = page->frame->kva;
 
+  bool is_holder = lock_held_by_current_thread(&filesys_lock);
 
-  /* Get a page of memory. */
-  // uint8_t *kpage = palloc_get_page(PAL_USER);
-  // if (kpage == NULL)
-  //   return false;
-
-
+  if (!is_holder)
+    lock_acquire(&filesys_lock);
+  struct file *file = filesys_open(file_name);
+  file_deny_write(file);
   /* Load this page. */
   file_seek(file, ofs);
-  int bytes = file_read(file, va, page_read_bytes);
+  int bytes = file_read(file, kva, page_read_bytes);
+  file_close(file);
+  if (!is_holder)
+    lock_release(&filesys_lock);
+
   if (bytes != (int)page_read_bytes) {
-    destroy(page);
+    free(load_aux->file_name);
     free(aux);
     return false;
   }
-  memset(va + page_read_bytes, 0, page_zero_bytes);
+  memset(kva + page_read_bytes, 0, page_zero_bytes);
+  free(load_aux->file_name);
   free(aux);
 
   return true;
@@ -759,14 +783,12 @@ static bool lazy_load_segment(struct page *page, void *aux) {
  *
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
-static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
+static bool load_segment(const char *file_name, off_t ofs, uint8_t *upage,
                          uint32_t read_bytes, uint32_t zero_bytes,
                          bool writable) {
   ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT(pg_ofs(upage) == 0);
   ASSERT(ofs % PGSIZE == 0);
-
-  file_seek(file, ofs);
 
   while (read_bytes > 0 || zero_bytes > 0) {
     /* Do calculate how to fill this page.
@@ -776,29 +798,33 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
     size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
     /* TODO: Set up aux to pass information to the lazy_load_segment. */
+    char *file_name_cpy = (char *)malloc(sizeof(char) * (strlen(file_name) + 1));
+    strlcpy(file_name_cpy, file_name, strlen(file_name) + 1);
     struct load_aux *aux = NULL;
     aux = malloc(sizeof(struct load_aux)); /* load_aux 생성 (malloc 사용) */
     if (aux == NULL) {
       return false;
     }
 
-    /* vm_entry 멤버들 설정, 가상페이지가 요구될 때 읽어야 할 파일의 오프셋과 사이즈, 
-      마지막에 패딩할 제로 바이트 등등 */
-    aux->file = file;
+    /* vm_entry 멤버들 설정, 가상페이지가 요구될 때 읽어야 할 파일의 오프셋과
+      사이즈, 마지막에 패딩할 제로 바이트 등등 */
+    aux->file_name = file_name_cpy;
     aux->page_read_bytes = page_read_bytes;
     aux->page_zero_bytes = page_zero_bytes;
     aux->ofs = ofs;
-    aux->writable = writable;
 
     if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable,
-                                        lazy_load_segment, aux))
+                                        lazy_load_segment, aux)) {
+      free(file_name_cpy);
+      free(aux);
       return false;
+    }
 
     /* Advance. */
     read_bytes -= page_read_bytes;
     zero_bytes -= page_zero_bytes;
     upage += PGSIZE;
-    ofs += read_bytes;
+    ofs += page_read_bytes;
   }
   return true;
 }
@@ -820,7 +846,7 @@ static bool setup_stack(struct intr_frame *if_) {
    * You might need to provide the way to identify the stack. 
    * You can use the auxillary markers in vm_type of vm/vm.h (e.g. VM_MARKER_0) to mark the page.
   */
-  success = vm_alloc_page(VM_ANON, stack_bottom, true);
+  success = vm_alloc_page(VM_ANON | VM_STACK, stack_bottom, true);
   if (success) {
     if_->rsp = USER_STACK;
   }

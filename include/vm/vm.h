@@ -20,7 +20,7 @@ enum vm_type {
 
 	/* Auxillary bit flag marker for store information. You can add more
 	 * markers, until the value is fit in the int. */
-	VM_MARKER_0 = (1 << 3),
+	VM_STACK = (1 << 3),
 	VM_MARKER_1 = (1 << 4),
 
 	/* DO NOT EXCEED THIS VALUE. */
@@ -44,13 +44,14 @@ struct thread;
  * uninit_page, file_page, anon_page, and page cache (project4).
  * DO NOT REMOVE/MODIFY PREDEFINED MEMBER OF THIS STRUCTURE. */
 struct page {
-	struct hash_elem h_elem;
 	const struct page_operations *operations;
 	void *va;              /* Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
-	bool writable;
 
 	/* Your implementation */
+	struct page *next_page; // used for do_munmap()
+	struct hash_elem h_elem;
+	bool writable;
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -92,15 +93,23 @@ struct page_operations {
 struct supplemental_page_table {
 	struct hash pages;
 	struct lock hash_lock;
+	struct thread *owner_th;
 };
 
 /* struct for lazy_load_segment function */
 struct load_aux {
-	struct file * file;
+	char * file_name;
 	size_t page_read_bytes;
 	size_t page_zero_bytes;
 	off_t ofs;
-	bool writable;
+};
+
+/* struct for lazy_mmap_segment function */
+struct mmap_aux {
+	struct file* fp;
+	size_t page_read_bytes;
+	size_t page_zero_bytes;
+	off_t ofs;
 };
 
 #include "threads/thread.h"

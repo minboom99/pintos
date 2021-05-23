@@ -15,7 +15,10 @@ struct file *process_get_file(int fd);
 void process_close_file(int fd);
 struct thread *find_child_with_pid(struct thread *parent, int child_pid);
 
-
 bool process_exist_same_fp(int fd);
+
+// #ifdef VM
+// static bool lazy_load_segment(struct page *page, void *aux);
+// #endif
 
 #endif /* userprog/process.h */

@@ -275,7 +275,8 @@ void thread_unblock(struct thread *t) {
   list_push_back(&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level(old_level);
-  if (!intr_context()) thread_yield();
+  if (!intr_context())
+    thread_yield();
 }
 
 /* Returns the name of the running thread. */
@@ -470,6 +471,10 @@ static void init_thread(struct thread *t, const char *name, int priority) {
   #ifdef USERPROG
   list_init(&t->fd_list);
   t->file_num = 2;
+  #endif
+
+  #ifdef VM
+  list_init(&t->mmap_list);
   #endif
  
   sema_init(&t->wait_sema, 0);
