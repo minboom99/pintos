@@ -102,7 +102,9 @@ struct page *check_address(const void *addr, struct intr_frame *if_) {
   }
   // page 존재
   if (VM_TYPE(page->operations->type) == VM_UNINIT) {
-    vm_claim_page(page->va);
+    if (!vm_claim_page(page->va)) {
+      exit(-1);
+    }
   }
   return page;
 }
@@ -110,16 +112,19 @@ struct page *check_address(const void *addr, struct intr_frame *if_) {
 void check_valid_buffer(void *buffer, unsigned size, struct intr_frame *if_,
                         bool to_write) {
   /* size가 PGSIZE보다 클 수도 있음 */
-  while (size > 0) {
-    size_t page_check_bytes = size < PGSIZE ? size : PGSIZE;
-    struct page *page = check_address(buffer, if_);
+  // bool is_holder = lock_held_by_current_thread(&load_lock);
+
+  void *cur_paddr = pg_round_down(buffer);
+  void *end_paddr = pg_round_down(buffer + size);
+  
+  while (cur_paddr <= end_paddr) {
+    struct page *page = check_address(cur_paddr, if_);
 
     // buffer에 쓰기를 하려고 했는데 writable이 아닌 경우
     if (to_write && page && !page->writable) exit(-1);
 
     /* advance */
-    size -= page_check_bytes;
-    buffer += page_check_bytes;
+    cur_paddr += PGSIZE;
   }
 }
 #endif
@@ -136,6 +141,7 @@ void syscall_init(void) {
             FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 
   lock_init(&filesys_lock);
+  lock_init(&load_lock);
 }
 
 /* The main system call interface */
@@ -389,13 +395,14 @@ void syscall_filesize_handler(struct intr_frame *if_) {
 
 void syscall_read_handler(struct intr_frame *if_) {
   // ====================== check validity of arguments ======================
+  struct thread *t = thread_current();
   int fd = (int)if_->R.rdi;
   if (fd < 0) {
     if_->R.rax = -1;
     return;
   }
   void *buffer = if_->R.rsi;
-  unsigned size = (unsigned)if_->R.rdx;
+  unsigned size = (unsigned)if_->R.rdx; 
 
   #ifndef VM
   check_address(buffer, if_);
@@ -431,7 +438,6 @@ void syscall_read_handler(struct intr_frame *if_) {
 
 void syscall_write_handler(struct intr_frame *if_) {
   // ===================== check validity of arguments =====================
-  struct thread *t = thread_current();
   int fd = (int)if_->R.rdi;
   if (fd < 0) {
     if_->R.rax = -1;
@@ -446,7 +452,6 @@ void syscall_write_handler(struct intr_frame *if_) {
   #endif
   // =======================================================================================
   lock_acquire(&filesys_lock);
-
   int ret = -1;
 
   struct file *fp = process_get_file(fd);
@@ -463,7 +468,6 @@ void syscall_write_handler(struct intr_frame *if_) {
       ret = (int)file_write(fp, buffer, (off_t)size);
     }
   }
-
   if_->R.rax = ret;
   lock_release(&filesys_lock);
 }
@@ -476,9 +480,7 @@ void syscall_seek_handler(struct intr_frame *if_) {
 
   lock_acquire(&filesys_lock);
   if (fp && fp != STDIN && fp != STDOUT) {
-    file_seek(
-        fp,
-        (off_t)poistion);
+    file_seek(fp, (off_t)poistion);
   }
   lock_release(&filesys_lock);
 }

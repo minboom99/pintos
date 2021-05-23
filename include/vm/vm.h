@@ -1,9 +1,9 @@
 #ifndef VM_VM_H
 #define VM_VM_H
 #include <stdbool.h>
-#include "threads/palloc.h"
-
 #include <hash.h>
+
+#include "threads/palloc.h"
 #include "threads/synch.h"
 
 enum vm_type {
@@ -37,6 +37,10 @@ enum vm_type {
 struct page_operations;
 struct thread;
 
+struct list frame_list; // allocated 된 frame을 관리하는 list (frame table에 해당)
+struct lock frame_list_lock; // frame_list의 synchronization 제어
+struct list_elem *frame_list_cursor; // frame_list victim search용
+
 #define VM_TYPE(type) ((type) & 7)
 
 /* The representation of "page".
@@ -52,6 +56,7 @@ struct page {
 	struct page *next_page; // used for do_munmap()
 	struct hash_elem h_elem;
 	bool writable;
+	struct supplemental_page_table *owner_spt; // 이 page가 담겨있는 spt
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -69,6 +74,7 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem frame_list_elem;
 };
 
 /* The function table for page operations.

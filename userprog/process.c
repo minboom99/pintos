@@ -482,8 +482,8 @@ static bool load(const char *file_name, struct intr_frame *if_) {
     printf("load: %s: open failed\n", file_name);
     goto done;
   }
-
   file_deny_write(file);
+  lock_release(&filesys_lock);
 
   /* Read and verify executable header. */
   if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
@@ -550,7 +550,6 @@ static bool load(const char *file_name, struct intr_frame *if_) {
         break;
     }
   }
-  lock_release(&filesys_lock);
 
   /* Set up stack. */
   if (!setup_stack(if_)) goto done;
@@ -766,6 +765,9 @@ static bool lazy_load_segment(struct page *page, void *aux) {
   free(load_aux->file_name);
   free(aux);
 
+  pml4_set_dirty(thread_current()->pml4, page->va, false);
+  pml4_set_accessed(thread_current()->pml4, page->va, false);
+
   return true;
 }
 
@@ -850,6 +852,8 @@ static bool setup_stack(struct intr_frame *if_) {
   if (success) {
     if_->rsp = USER_STACK;
   }
+  pml4_set_dirty(thread_current()->pml4, stack_bottom, false);
+  pml4_set_accessed(thread_current()->pml4, stack_bottom, false);
 
   return success;
 }

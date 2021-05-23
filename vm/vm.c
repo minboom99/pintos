@@ -10,7 +10,6 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "userprog/syscall.h"
-// #include "userprog/process.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -24,6 +23,9 @@ vm_init (void) {
 	register_inspect_intr ();
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
+  list_init(&frame_list);
+  lock_init(&frame_list_lock);
+  frame_list_cursor = NULL;
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -84,6 +86,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage,
     uninit_new(newpage, upage, init, type, aux, initiazlier);
     newpage->writable = writable;
     newpage->next_page = NULL;
+    newpage->owner_spt = spt;
 
     /* TODO: Insert the page into the spt. */
     if (!spt_insert_page(spt, newpage)) {
@@ -138,9 +141,23 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 /* Get the struct frame, that will be evicted. */
 static struct frame *
 vm_get_victim (void) {
-	struct frame *victim = NULL;
-	 /* TODO: The policy for eviction is up to you. */
+  ASSERT(!list_empty(&frame_list));
 
+	struct frame *victim = NULL;
+  struct list_elem *e;
+	/* TODO: The policy for eviction is up to you. */
+
+  // list 내에 file_page가 존재하는지 찾기
+  for (e = list_begin(&frame_list); e != list_end(&frame_list); e = list_next(e)) {
+    struct frame *cur_frame = list_entry(e, struct frame, frame_list_elem);
+    if (page_get_type(cur_frame->page) == VM_FILE) {
+      victim = cur_frame;
+      return victim;
+    }
+  }
+  e = list_front(&frame_list);
+  victim = list_entry(e, struct frame, frame_list_elem);
+  ASSERT(victim);
 	return victim;
 }
 
@@ -148,10 +165,39 @@ vm_get_victim (void) {
  * Return NULL on error.*/
 static struct frame *
 vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
-	/* TODO: swap out the victim and return the evicted frame. */
+  // Choose a frame to evict, using your page replacement algorithm. The
+  // "accessed" and "dirty" bits in the page table, described below, will come
+  // in handy.
 
-	return NULL;
+  // Remove references to the frame from any page table that refers to it.
+  // Unless you have implemented sharing, only a single page should refer to a
+  // frame at any given time.
+
+  // If necessary, write the page to the file system or to swap. The evicted
+  // frame may then be used to store a different page
+
+  /* =================== PLAN ===================
+   * 1. file_page가 frame_list에 존재하는지 찾기
+   * 2-1. 존재하면? swap_out() 성공할때까지 get_victim(), swap_out() loop 돌린다
+   * 2-2. 존재안하면? get_victim() 후 swap_out() 실패하면 바로 PANIC
+   * 3. frame_list 내에서 frame 제거하고 physical frame을 memset해준다.
+   */
+  struct frame *victim = vm_get_victim();
+
+  if (page_get_type(victim->page) == VM_FILE) {
+    swap_out(victim->page);
+  } else {
+    if (!swap_out(victim->page)) 
+      PANIC('The Swap disk is full!');
+  }
+
+  lock_acquire(&frame_list_lock);
+  list_remove(&victim->frame_list_elem);
+  lock_release(&frame_list_lock);
+  victim->page = NULL;
+  memset(victim->kva, 0, PGSIZE);
+
+	return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -165,16 +211,16 @@ vm_get_frame (void) {
 
 	frame = malloc(sizeof(struct frame));
 	if (frame == NULL) {
-		PANIC("todo");
+    frame = vm_evict_frame();
 	}
 
-	void * phy_addr = palloc_get_page(PAL_USER);
-	if (phy_addr == NULL) {
-		free(frame);
-		PANIC("todo");
-	}
-
+	void *phy_addr = palloc_get_page(PAL_USER);
 	frame->kva = phy_addr;
+	if (phy_addr == NULL) {
+    free(frame);
+    frame = vm_evict_frame();
+	}
+
 	frame->page = NULL;
 
 	ASSERT (frame != NULL);
@@ -196,6 +242,8 @@ static void vm_stack_growth(void *addr) {
   if (!vm_claim_page(addr)) {
     exit(-1);
   }
+  pml4_set_dirty(thread_current()->pml4, addr, false);
+  pml4_set_accessed(thread_current()->pml4, addr, false);
 }
 
 /* Handle the fault on write_protected page */
@@ -273,6 +321,9 @@ vm_do_claim_page (struct page *page) {
 		vm_dealloc_page(page);
 		return false;
 	}
+  lock_acquire(&frame_list_lock);
+  list_push_back(&frame_list, &frame->frame_list_elem);
+  lock_release(&frame_list_lock);
 
 	return swap_in (page, frame->kva);
 }
@@ -384,16 +435,19 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
   }
 
   // TODO : src->owner_th의 mmap_list를 iteration하면서 dst->owner_th->mmap_list로 정확히 복사하기
+  lock_acquire(&filesys_lock);
   for (e = list_begin(parent_mmap_list); e != list_end(parent_mmap_list); e = list_next(e)) {
     parent_mmap_file = list_entry(e, struct mmap_file, mmap_list_elem);
     fp = parent_mmap_file->fp;
     fp_copy = file_duplicate(fp);
     if (!fp_copy) {
+      lock_release(&filesys_lock);
       exit(-1);
     }
     child_mmap_file = malloc(sizeof(struct mmap_file));
     if (!child_mmap_file) {
       file_close(fp_copy);
+      lock_release(&filesys_lock);
       exit(-1);
     }
     list_push_back(child_mmap_list, &child_mmap_file->mmap_list_elem);
@@ -428,6 +482,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst,
       cur_page = next_page;
     }
   }
+  lock_release(&filesys_lock);
 
   return true;
 }

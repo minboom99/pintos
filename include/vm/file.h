@@ -11,6 +11,7 @@ struct file_page {
 	size_t page_read_bytes;
 	size_t page_zero_bytes;
 	off_t ofs;
+	bool accessed;
 };
 
 void vm_file_init (void);

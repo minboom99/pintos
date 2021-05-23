@@ -1,11 +1,12 @@
 /* file.c: Implementation of memory backed file object (mmaped object). */
-
+#include <string.h>
 #include <round.h>
 
 #include "vm/vm.h"
 #include "threads/mmu.h"
 #include "threads/thread.h"
 #include "userprog/syscall.h"
+#include "threads/malloc.h"
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
@@ -38,40 +39,83 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 /* Swap in the page by read contents from the file. */
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
+  void *va = page->va;
+
 	struct file_page *file_page UNUSED = &page->file;
+  struct file *fp = file_page->fp;
+  off_t ofs = file_page->ofs;
+  size_t page_read_bytes = file_page->page_read_bytes;
+  bool is_holder = lock_held_by_current_thread(&filesys_lock);
+
+  if (!is_holder)
+    lock_acquire(&filesys_lock);
+  file_read_at(fp, kva, page_read_bytes, ofs);
+  if (!is_holder)
+    lock_release(&filesys_lock);
+
+  pml4_set_accessed(thread_current()->pml4, va, file_page->accessed);
+  pml4_set_dirty(thread_current()->pml4, va, false);
+  return true;
 }
 
 /* Swap out the page by writeback contents to the file. */
 static bool
 file_backed_swap_out (struct page *page) {
-	struct file_page *file_page UNUSED = &page->file;
+  void *va = page->va;
+  struct frame *frame = page->frame;
+  void *kva = frame->kva;
+
+	struct file_page *file_page = &page->file;
+  struct file *fp = file_page->fp;
+  off_t ofs = file_page->ofs;
+  size_t page_read_bytes = file_page->page_read_bytes;
+  bool is_dirty = pml4_is_dirty(thread_current()->pml4, va);
+  bool is_holder = lock_held_by_current_thread(&filesys_lock);
+
+  if (is_dirty) {
+    if (!is_holder)
+      lock_acquire(&filesys_lock);
+    file_write_at(fp, kva, page_read_bytes, ofs);
+    if (!is_holder)
+      lock_release(&filesys_lock);
+  }
+
+  file_page->accessed = pml4_is_accessed(thread_current()->pml4, va);
+  pml4_clear_page(thread_current()->pml4, va);
+
+  page->frame = NULL;
+  return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
-// TODO
 static void
 file_backed_destroy (struct page *page) {
   // write back => vm_entry 가리키는 가상 주소에 대한 물리 페이지가 존재하고,
   // dirty하면 디스크에 메모리 내용을 기록
   void *va = page->va;
   struct frame *frame = page->frame;
-  void *kva = frame->kva;
+  void *kva;
 
   struct file_page *file_page = &page->file;
   struct file *fp = file_page->fp;
   off_t ofs = file_page->ofs;
   size_t page_read_bytes = file_page->page_read_bytes;
-  bool is_dirty = pml4_is_dirty(thread_current()->pml4, va);
+  bool is_dirty;
 
-  if (is_dirty) {
-    lock_acquire(&filesys_lock);
-    file_write_at(fp, kva, page_read_bytes, ofs);
-    lock_release(&filesys_lock);
+  if (frame) {
+    kva = frame->kva;
+    is_dirty = pml4_is_dirty(thread_current()->pml4, va);
+    if (is_dirty) {
+      lock_acquire(&filesys_lock);
+      file_write_at(fp, kva, page_read_bytes, ofs);
+      lock_release(&filesys_lock);
+    }
+
+    list_remove(&frame->frame_list_elem);
+    palloc_free_page(kva);
+    free(frame);
+    pml4_clear_page(thread_current()->pml4, va);
   }
-
-  palloc_free_page(kva);
-  free(frame);
-  pml4_clear_page(thread_current()->pml4, va);
 }
 
 /* Do the mmap */
@@ -241,6 +285,7 @@ static bool lazy_mmap_segment(struct page *page, void *aux) {
 
   memset(kva + page_read_bytes, 0, page_zero_bytes);
   pml4_set_dirty(thread_current()->pml4, page->va, false);
+  pml4_set_accessed(thread_current()->pml4, page->va, false);
 
   // 이걸 initializer에서 할 수가 없어서 여기서 함
   page->file.fp = file;

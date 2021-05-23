@@ -12,5 +12,6 @@ void syscall_init (void);
 void exit (int status);
 
 struct lock filesys_lock;
+struct lock load_lock;
 
 #endif /* userprog/syscall.h */
