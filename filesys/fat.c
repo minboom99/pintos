@@ -19,10 +19,10 @@ struct fat_boot {
 /* FAT FS */
 struct fat_fs {
 	struct fat_boot bs;
-	unsigned int *fat;
-	unsigned int fat_length;
+	unsigned int *fat; /* pointer pointing the head of fat */
+	unsigned int fat_length; /* the number of clusters */
 	disk_sector_t data_start;
-	cluster_t last_clst;
+	cluster_t last_clst; 
 	struct lock write_lock;
 };
 
@@ -127,6 +127,11 @@ fat_create (void) {
 	// Set up ROOT_DIR_CLST
 	fat_put (ROOT_DIR_CLUSTER, EOChain);
 
+	// Fill fat with FREE
+	for (cluster_t i = ROOT_DIR_CLUSTER + 1; i < fat_fs->fat_length; i ++) {
+		fat_put(i, FREE);
+	}
+
 	// Fill up ROOT_DIR_CLUSTER region with 0
 	uint8_t *buf = calloc (1, DISK_SECTOR_SIZE);
 	if (buf == NULL)
@@ -153,6 +158,10 @@ fat_boot_create (void) {
 void
 fat_fs_init (void) {
 	/* TODO: Your code goes here. */
+	fat_fs->fat_length = (fat_fs->bs.total_sectors - fat_fs->bs.fat_sectors - 1) / fat_fs->bs.sectors_per_cluster;	// "-1" is for fat boot sector
+	fat_fs->data_start = fat_fs->bs.fat_sectors + 1;																// "+1" is for fat boot sector
+	fat_fs->last_clst = ROOT_DIR_CLUSTER;															// "-1" is for fat ROOT_DIR_CLUSTER
+	lock_init(&fat_fs->write_lock);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -162,32 +171,105 @@ fat_fs_init (void) {
 /* Add a cluster to the chain.
  * If CLST is 0, start a new chain.
  * Returns 0 if fails to allocate a new cluster. */
-cluster_t
-fat_create_chain (cluster_t clst) {
-	/* TODO: Your code goes here. */
+cluster_t fat_create_chain(cluster_t clst) {
+  /* TODO: Your code goes here. */
+
+  /*
+   * Extend a chain by appending a cluster after the cluster specified in
+   * clst (cluster indexing number). If clst is equal to zero, then create
+   * a new chain. Return the cluster number of newly allocated cluster.
+   */
+
+  // When fat is full, just return 0 (fail).
+  cluster_t new_clst = 0;
+  for (cluster_t i = ROOT_DIR_CLUSTER + 1; i < fat_fs->fat_length; i ++) {
+		if (fat_get(i) == FREE) {
+			new_clst = i;
+			break;
+		}
+  }
+
+  // ========================= write_lock =========================
+  if (new_clst != 0) {
+    lock_acquire(&fat_fs->write_lock);
+
+    if (clst != 0)
+		fat_put(clst, new_clst);
+    fat_put(new_clst, EOChain);
+
+    lock_release(&fat_fs->write_lock);
+  }
+  // ==============================================================
+  return new_clst;
 }
 
 /* Remove the chain of clusters starting from CLST.
  * If PCLST is 0, assume CLST as the start of the chain. */
 void
 fat_remove_chain (cluster_t clst, cluster_t pclst) {
+	/* pclst should be the direct previous cluster in the chain */
 	/* TODO: Your code goes here. */
+	// ========================= write_lock =========================
+	if (clst == 0)
+		return;
+	
+	lock_acquire(&fat_fs->write_lock);
+
+	if (pclst != 0) {
+		ASSERT(fat_get(pclst) == clst);
+	}
+	cluster_t next_clst;
+	while ((next_clst = fat_get(clst)) != EOChain) {
+		fat_put(clst, FREE);
+		clst = next_clst;
+	}
+	fat_put(clst, FREE);
+
+	lock_release(&fat_fs->write_lock);
+	// ==============================================================
 }
 
 /* Update a value in the FAT table. */
 void
 fat_put (cluster_t clst, cluster_t val) {
 	/* TODO: Your code goes here. */
+	// ! caution: 이 함수를 부르기 전에 반드시 lock acquire할 것
+	if (clst >= fat_fs->fat_length) // ! for debugging
+		ASSERT(clst < fat_fs->fat_length);
+	cluster_t *table = (cluster_t *)fat_fs->fat;
+	table[clst] = val;
 }
 
 /* Fetch a value in the FAT table. */
 cluster_t
 fat_get (cluster_t clst) {
 	/* TODO: Your code goes here. */
+	if (clst >= fat_fs->fat_length) // ! for debugging
+		ASSERT(clst < fat_fs->fat_length);
+	cluster_t *table = (cluster_t *)fat_fs->fat;
+	return table[clst];
 }
 
 /* Covert a cluster # to a sector number. */
 disk_sector_t
 cluster_to_sector (cluster_t clst) {
 	/* TODO: Your code goes here. */
+	return fat_fs->data_start + ((clst - 1) * fat_fs->bs.sectors_per_cluster); // clst starts from 1
+}
+
+/* Get the last cluster of the chain of clusters starting from CLST */
+cluster_t
+fat_get_last_clst (cluster_t clst) {
+	cluster_t next_clst;
+
+	if (clst == 0)
+		return 0;
+
+	while (true) {
+		next_clst = fat_get(clst);
+		if (next_clst == EOChain)
+			break;
+		clst = next_clst;
+	}
+	return clst;
 }

@@ -1,0 +1,303 @@
+warning: tests/filesys/mount/placeholder not tested, assuming failure
+warning: tests/filesys/journaling/placeholder not tested, assuming failure
+TOTAL TESTING SCORE: 90.0%
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+SUMMARY BY TEST SET
+
+Test Set                                      Pts Max  % Ttl  % Max
+--------------------------------------------- --- --- ------ ------
+tests/threads/Rubric.alarm                      7/  7   2.0%/  2.0%
+tests/threads/Rubric.priority                  25/ 25   3.0%/  3.0%
+tests/userprog/Rubric.functionality            40/ 40  10.0%/ 10.0%
+tests/userprog/Rubric.robustness               40/ 40   5.0%/  5.0%
+tests/filesys/base/Rubric                      17/ 17  10.0%/ 10.0%
+tests/filesys/extended/Rubric.functionality    49/ 49  25.0%/ 25.0%
+tests/filesys/extended/Rubric.robustness       10/ 10  15.0%/ 15.0%
+tests/filesys/extended/Rubric.persistence      26/ 26  20.0%/ 20.0%
+tests/filesys/mount/Rubric                      0/  1   0.0%/  9.0%
+tests/filesys/journaling/Rubric                 0/  1   0.0%/ 27.0%
+--------------------------------------------- --- --- ------ ------
+Total                                                  90.0%/126.0%
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+SUMMARY OF INDIVIDUAL TESTS
+
+Functionality and robustness of alarm clock (tests/threads/Rubric.alarm):
+	     1/ 1 tests/threads/alarm-single
+	     1/ 1 tests/threads/alarm-multiple
+	     1/ 1 tests/threads/alarm-simultaneous
+	     2/ 2 tests/threads/alarm-priority
+
+	     1/ 1 tests/threads/alarm-zero
+	     1/ 1 tests/threads/alarm-negative
+
+	- Section summary.
+	      6/  6 tests passed
+	      7/  7 points subtotal
+
+Functionality of priority scheduler (tests/threads/Rubric.priority):
+	     1/ 1 tests/threads/priority-change
+	     1/ 1 tests/threads/priority-preempt
+
+	     1/ 1 tests/threads/priority-fifo
+	     2/ 2 tests/threads/priority-sema
+	     2/ 2 tests/threads/priority-condvar
+
+	     2/ 2 tests/threads/priority-donate-one
+	     3/ 3 tests/threads/priority-donate-multiple
+	     3/ 3 tests/threads/priority-donate-multiple2
+	     3/ 3 tests/threads/priority-donate-nest
+	     3/ 3 tests/threads/priority-donate-chain
+	     2/ 2 tests/threads/priority-donate-sema
+	     2/ 2 tests/threads/priority-donate-lower
+
+	- Section summary.
+	     12/ 12 tests passed
+	     25/ 25 points subtotal
+
+Functionality of system calls (tests/userprog/Rubric.functionality):
+	- Test argument passing on Pintos command line.
+	     1/ 1 tests/userprog/args-none
+	     1/ 1 tests/userprog/args-single
+	     1/ 1 tests/userprog/args-multiple
+	     1/ 1 tests/userprog/args-many
+	     1/ 1 tests/userprog/args-dbl-space
+
+	- Test "create" system call.
+	     1/ 1 tests/userprog/create-empty
+	     1/ 1 tests/userprog/create-long
+	     1/ 1 tests/userprog/create-normal
+	     1/ 1 tests/userprog/create-exists
+
+	- Test "open" system call.
+	     1/ 1 tests/userprog/open-missing
+	     1/ 1 tests/userprog/open-normal
+	     1/ 1 tests/userprog/open-twice
+
+	- Test "read" system call.
+	     1/ 1 tests/userprog/read-normal
+	     1/ 1 tests/userprog/read-zero
+
+	- Test "write" system call.
+	     1/ 1 tests/userprog/write-normal
+	     1/ 1 tests/userprog/write-zero
+
+	- Test "close" system call.
+	     1/ 1 tests/userprog/close-normal
+
+	- Test "fork" system call.
+	     1/ 1 tests/userprog/fork-once
+	     1/ 1 tests/userprog/fork-multiple
+	     2/ 2 tests/userprog/fork-close
+	     2/ 2 tests/userprog/fork-read
+
+	- Test "exec" system call.
+	     1/ 1 tests/userprog/exec-once
+	     1/ 1 tests/userprog/exec-arg
+	     2/ 2 tests/userprog/exec-read
+
+	- Test "wait" system call.
+	     1/ 1 tests/userprog/wait-simple
+	     1/ 1 tests/userprog/wait-twice
+
+	- Test "exit" system call.
+	     1/ 1 tests/userprog/exit
+
+	- Test "halt" system call.
+	     1/ 1 tests/userprog/halt
+
+	- Test recursive execution of user programs.
+	     2/ 2 tests/userprog/fork-recursive
+	     2/ 2 tests/userprog/multi-recurse
+
+	- Test read-only executable feature.
+	     1/ 1 tests/userprog/rox-simple
+	     2/ 2 tests/userprog/rox-child
+	     2/ 2 tests/userprog/rox-multichild
+
+	- Section summary.
+	     33/ 33 tests passed
+	     40/ 40 points subtotal
+
+Robustness of system calls (tests/userprog/Rubric.robustness):
+	- Test robustness of file descriptor handling.
+	     1/ 1 tests/userprog/close-bad-fd
+	     1/ 1 tests/userprog/close-twice
+	     1/ 1 tests/userprog/read-bad-fd
+	     1/ 1 tests/userprog/read-stdout
+	     1/ 1 tests/userprog/write-bad-fd
+	     1/ 1 tests/userprog/write-stdin
+	     2/ 2 tests/userprog/multi-child-fd
+
+	- Test robustness of pointer handling.
+	     1/ 1 tests/userprog/create-bad-ptr
+	     1/ 1 tests/userprog/exec-bad-ptr
+	     1/ 1 tests/userprog/open-bad-ptr
+	     1/ 1 tests/userprog/read-bad-ptr
+	     1/ 1 tests/userprog/write-bad-ptr
+
+	- Test robustness of buffer copying across page boundaries.
+	     2/ 2 tests/userprog/create-bound
+	     2/ 2 tests/userprog/open-boundary
+	     2/ 2 tests/userprog/read-boundary
+	     2/ 2 tests/userprog/write-boundary
+	     2/ 2 tests/userprog/fork-boundary
+	     2/ 2 tests/userprog/exec-boundary
+
+	- Test handling of null pointer and empty strings.
+	     1/ 1 tests/userprog/create-null
+	     1/ 1 tests/userprog/open-null
+	     1/ 1 tests/userprog/open-empty
+
+	- Test robustness of "fork", "exec" and "wait" system calls.
+	     2/ 2 tests/userprog/exec-missing
+	     2/ 2 tests/userprog/wait-bad-pid
+	     2/ 2 tests/userprog/wait-killed
+
+	- Test robustness of exception handling.
+	     1/ 1 tests/userprog/bad-read
+	     1/ 1 tests/userprog/bad-write
+	     1/ 1 tests/userprog/bad-jump
+	     1/ 1 tests/userprog/bad-read2
+	     1/ 1 tests/userprog/bad-write2
+	     1/ 1 tests/userprog/bad-jump2
+
+	- Section summary.
+	     30/ 30 tests passed
+	     40/ 40 points subtotal
+
+Functionality of base file system (tests/filesys/base/Rubric):
+	- Test basic support for small files.
+	     1/ 1 tests/filesys/base/sm-create
+	     1/ 1 tests/filesys/base/sm-full
+	     1/ 1 tests/filesys/base/sm-random
+	     1/ 1 tests/filesys/base/sm-seq-block
+	     2/ 2 tests/filesys/base/sm-seq-random
+
+	- Test basic support for large files.
+	     1/ 1 tests/filesys/base/lg-create
+	     1/ 1 tests/filesys/base/lg-full
+	     1/ 1 tests/filesys/base/lg-random
+	     1/ 1 tests/filesys/base/lg-seq-block
+	     2/ 2 tests/filesys/base/lg-seq-random
+
+	- Test synchronized multiprogram access to files.
+	     2/ 2 tests/filesys/base/syn-read
+	     2/ 2 tests/filesys/base/syn-write
+	     1/ 1 tests/filesys/base/syn-remove
+
+	- Section summary.
+	     13/ 13 tests passed
+	     17/ 17 points subtotal
+
+Functionality of extended file system (tests/filesys/extended/Rubric.functionality):
+	- Test directory support.
+	     1/ 1 tests/filesys/extended/dir-mkdir
+	     3/ 3 tests/filesys/extended/dir-mk-tree
+
+	     1/ 1 tests/filesys/extended/dir-rmdir
+	     3/ 3 tests/filesys/extended/dir-rm-tree
+
+	     5/ 5 tests/filesys/extended/dir-vine
+
+	- Test file growth.
+	     1/ 1 tests/filesys/extended/grow-create
+	     1/ 1 tests/filesys/extended/grow-seq-sm
+	     3/ 3 tests/filesys/extended/grow-seq-lg
+	     3/ 3 tests/filesys/extended/grow-sparse
+	     3/ 3 tests/filesys/extended/grow-two-files
+	     1/ 1 tests/filesys/extended/grow-tell
+	     1/ 1 tests/filesys/extended/grow-file-size
+
+	- Test directory growth.
+	     1/ 1 tests/filesys/extended/grow-dir-lg
+	     1/ 1 tests/filesys/extended/grow-root-sm
+	     1/ 1 tests/filesys/extended/grow-root-lg
+
+	- Test writing from multiple processes.
+	     5/ 5 tests/filesys/extended/syn-rw
+
+	- Symlink
+	     5/ 5 tests/filesys/extended/symlink-file
+	     5/ 5 tests/filesys/extended/symlink-dir
+	     5/ 5 tests/filesys/extended/symlink-link
+
+	- Section summary.
+	     19/ 19 tests passed
+	     49/ 49 points subtotal
+
+Robustness of file system (tests/filesys/extended/Rubric.robustness):
+	     1/ 1 tests/filesys/extended/dir-empty-name
+	     1/ 1 tests/filesys/extended/dir-open
+	     1/ 1 tests/filesys/extended/dir-over-file
+	     1/ 1 tests/filesys/extended/dir-under-file
+
+	     3/ 3 tests/filesys/extended/dir-rm-cwd
+	     2/ 2 tests/filesys/extended/dir-rm-parent
+	     1/ 1 tests/filesys/extended/dir-rm-root
+
+	- Section summary.
+	      7/  7 tests passed
+	     10/ 10 points subtotal
+
+Persistence of file system (tests/filesys/extended/Rubric.persistence):
+	     1/ 1 tests/filesys/extended/dir-empty-name-persistence
+	     1/ 1 tests/filesys/extended/dir-mk-tree-persistence
+	     1/ 1 tests/filesys/extended/dir-mkdir-persistence
+	     1/ 1 tests/filesys/extended/dir-open-persistence
+	     1/ 1 tests/filesys/extended/dir-over-file-persistence
+	     1/ 1 tests/filesys/extended/dir-rm-cwd-persistence
+	     1/ 1 tests/filesys/extended/dir-rm-parent-persistence
+	     1/ 1 tests/filesys/extended/dir-rm-root-persistence
+	     1/ 1 tests/filesys/extended/dir-rm-tree-persistence
+	     1/ 1 tests/filesys/extended/dir-rmdir-persistence
+	     1/ 1 tests/filesys/extended/dir-under-file-persistence
+	     1/ 1 tests/filesys/extended/dir-vine-persistence
+	     1/ 1 tests/filesys/extended/grow-create-persistence
+	     1/ 1 tests/filesys/extended/grow-dir-lg-persistence
+	     1/ 1 tests/filesys/extended/grow-file-size-persistence
+	     1/ 1 tests/filesys/extended/grow-root-lg-persistence
+	     1/ 1 tests/filesys/extended/grow-root-sm-persistence
+	     1/ 1 tests/filesys/extended/grow-seq-lg-persistence
+	     1/ 1 tests/filesys/extended/grow-seq-sm-persistence
+	     1/ 1 tests/filesys/extended/grow-sparse-persistence
+	     1/ 1 tests/filesys/extended/grow-tell-persistence
+	     1/ 1 tests/filesys/extended/grow-two-files-persistence
+	     1/ 1 tests/filesys/extended/syn-rw-persistence
+	     1/ 1 tests/filesys/extended/symlink-file-persistence
+	     1/ 1 tests/filesys/extended/symlink-dir-persistence
+	     1/ 1 tests/filesys/extended/symlink-link-persistence
+
+	- Section summary.
+	     26/ 26 tests passed
+	     26/ 26 points subtotal
+
+Functionality of mount (tests/filesys/mount/Rubric):
+	- Basic functionality for mount.
+	  ** 0/ 1 tests/filesys/mount/placeholder
+
+	- Section summary.
+	      0/  1 tests passed
+	      0/  1 points subtotal
+
+Functionality of journaling (tests/filesys/journaling/Rubric):
+	- Basic functionality for journaling.
+	  ** 0/ 1 tests/filesys/journaling/placeholder
+
+	- Section summary.
+	      0/  1 tests passed
+	      0/  1 points subtotal
+
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+DETAILS OF tests/filesys/mount/placeholder FAILURE:
+
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+DETAILS OF tests/filesys/journaling/placeholder FAILURE:
+

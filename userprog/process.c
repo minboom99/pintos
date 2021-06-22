@@ -158,6 +158,11 @@ static void __do_fork(void *aux) {
   if (!pml4_for_each(parent->pml4, duplicate_pte, parent)) goto error;
 #endif
 
+#ifdef EFILESYS
+  if (parent->cur_dir)
+    current->cur_dir = dir_reopen(parent->cur_dir);
+#endif
+
   /* TODO: Your code goes here.
    * TODO: Hint) To duplicate the file object, use `file_duplicate`
    * TODO:       in include/filesys/file.h. Note that parent should not return
@@ -338,6 +343,10 @@ void process_exit(void) {
   }
 #endif
   lock_release(&filesys_lock);
+
+#ifdef EFILESYS
+  dir_close(curr->cur_dir);
+#endif
 
   curr->is_terminated = true;
   if (curr->parent && curr->parent->waiting_child == curr) {

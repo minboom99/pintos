@@ -138,6 +138,9 @@ struct thread {
   struct supplemental_page_table spt;
   struct list mmap_list;
 #endif
+#ifdef EFILESYS
+  struct dir *cur_dir;
+#endif
 
   /* Owned by thread.c. */
   struct intr_frame tf; /* Information for switching */

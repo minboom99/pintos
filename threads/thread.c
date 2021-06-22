@@ -476,6 +476,10 @@ static void init_thread(struct thread *t, const char *name, int priority) {
   #ifdef VM
   list_init(&t->mmap_list);
   #endif
+
+  #ifdef EFILESYS
+  t->cur_dir = NULL;
+  #endif
  
   sema_init(&t->wait_sema, 0);
 

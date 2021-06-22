@@ -12,10 +12,11 @@ userprog/process.o: ../../userprog/process.c \
  ../../include/lib/stdio.h ../../include/lib/stdarg.h \
  ../../include/lib/kernel/stdio.h ../../include/lib/stdlib.h \
  ../../include/lib/string.h ../../include/filesys/directory.h \
- ../../include/devices/disk.h ../../include/filesys/filesys.h \
- ../../include/intrinsic.h ../../include/threads/mmu.h \
- ../../include/threads/pte.h ../../include/threads/vaddr.h \
- ../../include/threads/loader.h ../../include/threads/flags.h \
- ../../include/threads/init.h ../../include/threads/mmu.h \
- ../../include/userprog/gdt.h ../../include/userprog/syscall.h \
- ../../include/userprog/tss.h ../../include/threads/malloc.h
+ ../../include/devices/disk.h ../../include/filesys/fat.h \
+ ../../include/filesys/filesys.h ../../include/intrinsic.h \
+ ../../include/threads/mmu.h ../../include/threads/pte.h \
+ ../../include/threads/vaddr.h ../../include/threads/loader.h \
+ ../../include/threads/flags.h ../../include/threads/init.h \
+ ../../include/threads/mmu.h ../../include/userprog/gdt.h \
+ ../../include/userprog/syscall.h ../../include/userprog/tss.h \
+ ../../include/threads/malloc.h

@@ -9,6 +9,8 @@
 
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/directory.h"
+#include "filesys/inode.h"
 #include "intrinsic.h"
 #include "lib/kernel/stdio.h"
 #include "threads/flags.h"
@@ -43,12 +45,19 @@ void syscall_close_handler(struct intr_frame *);
 
 void syscall_dup2_handler(struct intr_frame *);
 
-
 #ifdef VM
 void syscall_mmap_handler(struct intr_frame *);
 void syscall_munmap_handler(struct intr_frame *);
 #endif
 
+#ifdef EFILESYS
+void syscall_chdir_handler(struct intr_frame *);
+void syscall_mkdir_handler(struct intr_frame *);
+void syscall_readdir_handler(struct intr_frame *);
+void syscall_isdir_handler(struct intr_frame *);
+void syscall_inumber_handler(struct intr_frame *);
+void syscall_symlink_handler(struct intr_frame *);
+#endif
 /*
  * System call.
  *
@@ -218,6 +227,32 @@ void syscall_handler(struct intr_frame *if_) {
     }
     case SYS_MUNMAP: {
       syscall_munmap_handler(if_);
+      break;
+    }
+#endif
+#ifdef EFILESYS
+    case SYS_CHDIR: {
+      syscall_chdir_handler(if_);
+      break;
+    }
+    case SYS_MKDIR: {
+      syscall_mkdir_handler(if_);
+      break;
+    }
+    case SYS_READDIR: {
+      syscall_readdir_handler(if_);
+      break;
+    }
+    case SYS_ISDIR: {
+      syscall_isdir_handler(if_);
+      break;
+    }
+    case SYS_INUMBER: {
+      syscall_inumber_handler(if_);
+      break;
+    }
+    case SYS_SYMLINK: {
+      syscall_symlink_handler(if_);
       break;
     }
 #endif
@@ -546,7 +581,6 @@ void syscall_dup2_handler(struct intr_frame *if_) {
 // ==============================================================================
 
 #ifdef VM
-
 /* 
  * addr, size를 check하여 다른 page를 침범하지 않는지 먼저 검사.
  * addr는 무조건 page-alligned 되어있어야 함.
@@ -599,11 +633,230 @@ void syscall_mmap_handler(struct intr_frame * if_) {
   return;
 }
 
-
 void syscall_munmap_handler(struct intr_frame * if_) {
   void *addr = if_->R.rdi;
   // addr must be the virtual address returned by a previous call to mmap by the
   // same process that has not yet been unmapped.
   do_munmap(addr);
+}
+#endif
+
+#ifdef EFILESYS
+
+/* thread_current()의 cur_dir을 바꿔줘야 한다. */
+void syscall_chdir_handler(struct intr_frame *if_) {
+  /* bool chdir (const char *dir_name) */
+  const char *dir_name = if_->R.rdi;
+  check_address((void *)dir_name, if_);
+
+  struct thread *curr = thread_current();
+  bool is_absolute = (dir_name[0] == '/');
+  struct dir *start_dir;
+  struct dir *new_dir;
+  struct dir *prev_dir;
+  bool success = false;
+
+  if (is_absolute) {
+    start_dir = dir_open_root();
+  } else {
+    // thread_current()의 cur_dir이 NULL인 경우 -> root directory
+    if (!curr->cur_dir) 
+      start_dir = dir_open_root();
+    else 
+      start_dir = dir_reopen(curr->cur_dir);
+  }
+
+  if (!start_dir) // dir_open_root() 실패했는지 체크
+    goto done;
+
+  prev_dir = curr->cur_dir;
+  new_dir = dir_walk(start_dir, dir_name); // dir_name에 해당하는 dir 구하기
+  dir_close(start_dir);
+
+  // dir_walk 실패했는지 체크
+  if (!new_dir) 
+    goto done;
+
+  // 기존과 바뀌었다면 기존에 들고 있던 dir을 dir_close()해줘야 하고, 안
+  // 바뀌었어도 같은 dir가 한번 더 열리므로 dir_close()해줘야 한댜.
+  dir_close(prev_dir);
+
+  // new_dir이 root였으면 new_dir 닫고 curr->cur_dir에 NULL 할당 해줘야 함
+  bool is_root = (inode_get_cluster(dir_get_inode(new_dir)) == ROOT_DIR_CLUSTER);
+  if (is_root) {
+    dir_close(new_dir);
+    curr->cur_dir = NULL;
+  } else {
+    curr->cur_dir = new_dir;
+  }
+
+  success = true;
+done:
+  if_->R.rax = success;
+  return;
+}
+
+void syscall_mkdir_handler(struct intr_frame * if_) {
+  /* bool mkdir (const char *dir_name) */
+  const char *dir_name = if_->R.rdi;
+  check_address((void *)dir_name, if_);
+
+  /*
+   * - dir_find_and_open으로 parent directory랑 추가할 directory name 얻기
+   * - fat_create_chain 으로 빈 cluster 찾기 -> sector로 변환
+   * - dir_create로 디렉토리 만들기
+   * - dir_add로 parent에 child로 집어넣어준다
+   * - ".."이 parent를 가리키게 해줘야 한다.
+   */
+   
+  struct dir *parent_dir = NULL;
+  struct dir *new_dir = NULL;
+	struct dir* cur_dir = thread_current()->cur_dir;
+	struct inode *inode = NULL;
+  char *dir_name_buf = NULL;
+  bool success = false;
+  
+  parent_dir = dir_find_and_open(cur_dir, dir_name, &dir_name_buf);
+	if (!parent_dir)
+    goto done;
+  
+	/* directory의 inode를 만들 inode_sector 찾기 */
+	cluster_t inode_clst = fat_create_chain(0);
+	if (inode_clst == 0) 
+    goto done;
+  
+	disk_sector_t inode_sector = cluster_to_sector(inode_clst);
+	if (!dir_create_with_cluster(inode_clst, 16)) 
+    goto done;
+  
+	if (!dir_add (parent_dir, dir_name_buf, inode_sector)) {
+    inode = inode_open(inode_sector);
+		inode_remove(inode);
+		inode_close(inode);
+    goto done;
+  }
+  
+	/* directory의의 inode->data의 inode_clst, dir_or_file(dir_create()에서 수정됨) 수정 */
+  inode = inode_open(inode_sector);
+  new_dir = dir_open(inode);
+  bool add_success = dir_add(new_dir, "..",  inode_get_inumber(dir_get_inode(parent_dir)));
+  dir_close(new_dir);
+  
+  if (!add_success){
+    dir_remove(parent_dir, dir_name_buf);
+    goto done;
+  }
+
+  success = true;
+done:
+  /* cur_dir이 root가 아닌 경우에는 닫으면 안됨 */
+  if (parent_dir != cur_dir)
+		dir_close(parent_dir);
+  free(dir_name_buf);
+  if_->R.rax = success;
+  return;
+}
+
+void syscall_readdir_handler(struct intr_frame *if_) {
+  /* bool readdir (int fd, char *file_name) */
+  int fd = (int)if_->R.rdi;
+  char *file_name = if_->R.rsi;
+  check_address((void *)file_name, if_);
+
+  bool success = false;
+  struct file *fp = process_get_file(fd);
+  char buf[NAME_MAX + 1];
+
+  if (fp != NULL)
+  {
+    /* directory 아니면 false return*/
+    if (!inode_is_dir(file_get_inode(fp))) 
+      goto done;
+    
+    lock_acquire(&filesys_lock);
+
+    success = file_readdir(fp, buf);
+    while (success && (!strcmp(buf, ".") || !strcmp(buf, ".."))) {
+      success = file_readdir(fp, buf);
+    }
+
+    lock_release(&filesys_lock);
+  }
+  if (success)
+    memcpy(file_name, buf, NAME_MAX + 1);
+done:
+  if_->R.rax = success;
+  return;
+}
+
+void syscall_isdir_handler(struct intr_frame *if_) {
+  /* bool isdir (int fd) */
+  int fd = (int)if_->R.rdi;
+  bool ret = false;
+  struct file *fp = process_get_file(fd);
+
+  if (fp != NULL)
+  {
+    lock_acquire(&filesys_lock);
+    ret = inode_is_dir(file_get_inode(fp));
+    lock_release(&filesys_lock);
+  }
+
+  if_->R.rax = ret;
+}
+
+void syscall_inumber_handler(struct intr_frame *if_) {
+  /* int inumber (int fd) */
+  int fd = (int)if_->R.rdi;
+  int ret = -1;
+  struct file *fp = process_get_file(fd);
+
+  if (fp != NULL)
+  {
+    lock_acquire(&filesys_lock);
+    ret = inode_get_inumber(file_get_inode(fp));
+    lock_release(&filesys_lock);
+  }
+
+  if_->R.rax = ret;
+}
+
+/* On failure, return -1 */
+void syscall_symlink_handler(struct intr_frame *if_) {
+  /* int symlink (const char *target, const char *linkpath) */
+  const char *target = if_->R.rdi; // src
+  const char *linkpath = if_->R.rsi; // dest
+  check_address((void *)target, if_);
+  check_address((void *)linkpath, if_);
+
+  int ret = -1;
+
+  lock_acquire(&filesys_lock);
+  struct file *target_file = filesys_open(target); // target_file이 존재하지 않아도 괜찮음
+  
+  if(!filesys_create(linkpath, 0)) {
+    file_close(target_file);
+    goto done;
+  } 
+  struct file *link_file = filesys_open(linkpath);
+  if (!link_file) {
+    filesys_remove(linkpath);
+    file_close(target_file);
+    goto done;
+  }
+  
+  if (target_file) 
+    inode_copy_soft(file_get_inode(link_file), file_get_inode(target_file), target);
+  else 
+    inode_copy_soft(file_get_inode(link_file), NULL, target);
+
+  file_close(link_file);
+  file_close(target_file);
+
+  ret = 0;
+done:
+  lock_release(&filesys_lock);
+  if_->R.rax = ret;
+  return;
 }
 #endif

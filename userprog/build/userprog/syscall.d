@@ -7,13 +7,16 @@ userprog/syscall.o: ../../userprog/syscall.c \
  ../../include/lib/stdlib.h ../../include/lib/string.h \
  ../../include/lib/syscall-nr.h ../../include/filesys/file.h \
  ../../include/filesys/off_t.h ../../include/filesys/filesys.h \
- ../../include/intrinsic.h ../../include/threads/mmu.h \
- ../../include/threads/pte.h ../../include/threads/vaddr.h \
- ../../include/threads/loader.h ../../include/lib/kernel/stdio.h \
- ../../include/threads/flags.h ../../include/threads/interrupt.h \
- ../../include/threads/palloc.h ../../include/threads/synch.h \
- ../../include/threads/thread.h ../../include/userprog/gdt.h \
- ../../include/userprog/process.h ../../include/threads/malloc.h \
- ../../include/vm/vm.h ../../include/lib/kernel/hash.h \
- ../../include/lib/kernel/list.h ../../include/vm/uninit.h \
- ../../include/vm/anon.h ../../include/vm/file.h
+ ../../include/filesys/directory.h ../../include/devices/disk.h \
+ ../../include/lib/inttypes.h ../../include/filesys/fat.h \
+ ../../include/filesys/inode.h ../../include/intrinsic.h \
+ ../../include/threads/mmu.h ../../include/threads/pte.h \
+ ../../include/threads/vaddr.h ../../include/threads/loader.h \
+ ../../include/lib/kernel/stdio.h ../../include/threads/flags.h \
+ ../../include/threads/interrupt.h ../../include/threads/palloc.h \
+ ../../include/threads/synch.h ../../include/threads/thread.h \
+ ../../include/userprog/gdt.h ../../include/userprog/process.h \
+ ../../include/threads/malloc.h ../../include/vm/vm.h \
+ ../../include/lib/kernel/hash.h ../../include/lib/kernel/list.h \
+ ../../include/vm/uninit.h ../../include/vm/anon.h \
+ ../../include/vm/file.h

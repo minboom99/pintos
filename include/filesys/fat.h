@@ -12,6 +12,7 @@ typedef uint32_t cluster_t;  /* Index of a cluster within FAT. */
 
 #define FAT_MAGIC 0xEB3C9000 /* MAGIC string to identify FAT disk */
 #define EOChain 0x0FFFFFFF   /* End of cluster chain */
+#define FREE 0x0FFFFFFE
 
 /* Sectors of FAT information. */
 #define SECTORS_PER_CLUSTER 1 /* Number of sectors per cluster */
@@ -34,5 +35,6 @@ void fat_remove_chain (
 cluster_t fat_get (cluster_t clst);
 void fat_put (cluster_t clst, cluster_t val);
 disk_sector_t cluster_to_sector (cluster_t clst);
+cluster_t fat_get_last_clst (cluster_t clst);
 
 #endif /* filesys/fat.h */
